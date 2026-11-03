@@ -1,0 +1,73 @@
+{
+ "英国库存": {
+  "report_skus": 691,
+  "cells_ok": 3455,
+  "cells_bad": 0,
+  "sheet_skus_not_in_report": 12,
+  "AA_col": {
+   "formula_cells": 703,
+   "static_cells": 0
+  }
+ },
+ "欧洲库存": {
+  "report_skus": 435,
+  "cells_ok": 2170,
+  "cells_bad": 0,
+  "sheet_skus_not_in_report": 24,
+  "AA_col": {
+   "formula_cells": 458,
+   "static_cells": 0
+  }
+ },
+ "多国库存": {
+  "report_rows": 2741,
+  "sheet_rows": 2741,
+  "header_ok": true,
+  "rows_compared": 2741,
+  "cell_diff": 0
+ },
+ "每日销售数据": {
+  "sheet_rows": 20302,
+  "report_rows_202610txt": 13080,
+  "day_1012_groups_ok": 69,
+  "day_1012_groups_bad": 0
+ },
+ "罗马尼亚库存明细": {
+  "report_rows": 267,
+  "sheet_rows": 267,
+  "row_equal": 267,
+  "anchor": "2026-10-12 00:00:00"
+ },
+ "罗马尼亚分析表": {
+  "sku_rows": 282,
+  "X_9月总": {
+   "ok": 282,
+   "bad": 0
+  },
+  "日销窗": {
+   "ok": 10998,
+   "bad": 0,
+   "days": 39
+  },
+  "value_book": "C:\\Users\\dell\\Desktop\\work-main\\sale_file_gen\\Daily_Sales_Report\\日销表程序版\\output\\罗马尼亚库存销售表.xlsx"
+ },
+ "美客多库存明细": {
+  "report_rows": 356,
+  "sheet_rows": 356,
+  "row_equal": 356,
+  "anchor": "2026-10-12 00:00:00"
+ },
+ "美客多分析表": {
+  "sku_rows": 348,
+  "X_9月总": {
+   "ok": 348,
+   "bad": 0
+  },
+  "日销窗": {
+   "ok": 13572,
+   "bad": 0,
+   "days": 39
+  },
+  "value_book": "C:\\Users\\dell\\Desktop\\sale_file_gen\\sale_file_gen\\Daily_Sales_Report\\output\\美客多库存销售表.xlsx"
+ }
+}

@@ -1,0 +1,12 @@
+﻿# sale_file_gen 月销表流水线 —— Python 依赖
+# 适用 Python 3.10+（本机实测 3.14.7 / pandas 3.0.5）
+# 安装：python -m pip install -r requirements.txt
+
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1.5
+python-dateutil>=2.8.2
+chardet>=5.0
+
+# —— 可选，仅 trunk/工具-月报生成.py（HTML→PDF 月报）需要；不装不影响四条主线 ——
+# playwright>=1.40

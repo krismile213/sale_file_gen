@@ -1,0 +1,14 @@
+{
+  "_说明": "复制本文件为 config.json 再填。config.json 含密码，不要提交 SVN。",
+  "ziniao": {
+    "company": "",
+    "username": "",
+    "password": "",
+    "port": 16851,
+    "client_path": "D:\\Program Files\\ziniao\\ziniao.exe"
+  },
+  "paths": {
+    "_说明": "下载落地目录 → 快照目录。{period} 会替换成 202610，{date} 替换成 20261027。",
+    "snapshot_root": "trunk/data/数据归属周期/{period}/快照日期/{date}"
+  }
+}

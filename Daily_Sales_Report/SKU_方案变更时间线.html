@@ -1,0 +1,51 @@
+<svg viewBox="0 0 680 356" width="100%" role="img" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI','Microsoft YaHei',sans-serif">
+<title>SKU 方案变更时间线</title>
+<desc>10月23日与10月24日两天的 SKU 识别与补行机制改动对比</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<text x="40" y="28" font-size="14" font-weight="500" fill="#2C2C2A">从昨天（10/23）到今天（10/24）改了什么</text>
+<rect x="40" y="48" width="296" height="30" rx="8" fill="#B5D4F4" stroke="#378ADD" stroke-width="0.5"/>
+<text x="56" y="63" font-size="12" font-weight="500" fill="#0C447C" dominant-baseline="central">10/23 · 三态与补行重构</text>
+<rect x="344" y="48" width="296" height="30" rx="8" fill="#9FE1CB" stroke="#1D9E75" stroke-width="0.5"/>
+<text x="360" y="63" font-size="12" font-weight="500" fill="#085041" dominant-baseline="central">10/24 · 闸门收紧与正则放宽</text>
+<path d="M322 48 L322 336" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="3 3"/>
+<circle cx="52" cy="109" r="3" fill="#378ADD"/>
+<text x="64" y="109" font-size="12" fill="#2C2C2A" dominant-baseline="central">三态模式上线</text>
+<text x="64" y="126" font-size="11" fill="#5F5E5A" dominant-baseline="central">在售/在途/未上架；listing 活但零库存判在售</text>
+<circle cx="52" cy="149" r="3" fill="#378ADD"/>
+<text x="64" y="149" font-size="12" fill="#2C2C2A" dominant-baseline="central">补行三源就位</text>
+<text x="64" y="166" font-size="11" fill="#5F5E5A" dominant-baseline="central">货件+库存源+listing，修零货件直接 return 根因</text>
+<circle cx="52" cy="189" r="3" fill="#378ADD"/>
+<text x="64" y="189" font-size="12" fill="#2C2C2A" dominant-baseline="central">销量驱动补行</text>
+<text x="64" y="206" font-size="11" fill="#5F5E5A" dominant-baseline="central">按站点渠道切分，防法国销量补进英国表</text>
+<circle cx="52" cy="229" r="3" fill="#378ADD"/>
+<text x="64" y="229" font-size="12" fill="#2C2C2A" dominant-baseline="central">状态回刷 + 起售日期</text>
+<text x="64" y="246" font-size="11" fill="#5F5E5A" dominant-baseline="central">旧行也刷新 D 列；起售日=首可售日只写一次</text>
+<circle cx="52" cy="269" r="3" fill="#378ADD"/>
+<text x="64" y="269" font-size="12" fill="#2C2C2A" dominant-baseline="central">登记簿重建带旧值</text>
+<text x="64" y="286" font-size="11" fill="#5F5E5A" dominant-baseline="central">456 条起售日期不再被重建清空</text>
+<circle cx="52" cy="309" r="3" fill="#378ADD"/>
+<text x="64" y="309" font-size="12" fill="#2C2C2A" dominant-baseline="central">粉色规则排除未上架</text>
+<text x="64" y="326" font-size="11" fill="#5F5E5A" dominant-baseline="central">16 张表 XML 层补丁，幂等可重跑</text>
+<circle cx="356" cy="109" r="3" fill="#1D9E75"/>
+<text x="368" y="109" font-size="12" fill="#2C2C2A" dominant-baseline="central">正则两轮放宽</text>
+<text x="368" y="126" font-size="11" fill="#5F5E5A" dominant-baseline="central">单字母→多字母后缀，+7 个漏网 3 个有货</text>
+<circle cx="356" cy="149" r="3" fill="#1D9E75"/>
+<text x="368" y="149" font-size="12" fill="#2C2C2A" dominant-baseline="central">月份闸 → 证据闸</text>
+<text x="368" y="166" font-size="11" fill="#5F5E5A" dominant-baseline="central">可售/在途/月销任一条即补，不看首现日期</text>
+<circle cx="356" cy="189" r="3" fill="#1D9E75"/>
+<text x="368" y="189" font-size="12" fill="#2C2C2A" dominant-baseline="central">证据闸先于三态闸</text>
+<text x="368" y="206" font-size="11" fill="#5F5E5A" dominant-baseline="central">修 listing 导出滞后把有销量 SKU 挡在表外</text>
+<circle cx="356" cy="229" r="3" fill="#1D9E75"/>
+<text x="368" y="229" font-size="12" fill="#2C2C2A" dominant-baseline="central">sku_set 空洞容忍</text>
+<text x="368" y="246" font-size="11" fill="#5F5E5A" dominant-baseline="central">连续 30 行空才收尾，防重复补 375 行</text>
+<circle cx="356" cy="269" r="3" fill="#1D9E75"/>
+<text x="368" y="269" font-size="12" fill="#2C2C2A" dominant-baseline="central">新建 Interflowd沙特簿</text>
+<text x="368" y="286" font-size="11" fill="#5F5E5A" dominant-baseline="central">13 本齐 + 报告解析 glob 回退 4 处</text>
+<circle cx="356" cy="309" r="3" fill="#1D9E75"/>
+<text x="368" y="309" font-size="12" fill="#2C2C2A" dominant-baseline="central">G598~G601 追踪结案</text>
+<text x="368" y="326" font-size="11" fill="#5F5E5A" dominant-baseline="central">英国未上架·欧盟手工行·其余 8 表齐全</text>
+</svg>

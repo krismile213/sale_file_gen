@@ -1,0 +1,138 @@
+========================================================================================
+① 库存报告（20261023 快照目录）—— 按 sku 列前缀匹配
+========================================================================================
+  interflow加拿大管理库存报告20261023.csv                         sku列=sku        命中 4
+  interflow沙特阿拉伯管理库存报告20261021.csv                       sku列=sku        命中 4
+  [表头乱码，按列位0/1兜底] interflow澳大利亚管理库存报告20261023.csv
+  interflow澳大利亚管理库存报告20261023.csv                        sku列=0/1        命中 4
+  interflow美国管理库存报告20261023.csv                          sku列=sku        命中 4
+  interflow阿拉伯联合酋长国管理库存报告20261023.csv                    sku列=sku        命中 4
+  亚马逊加拿大管理库存报告20261023.csv                               sku列=sku        命中 0
+  亚马逊印度管理库存报告20261023.csv                                sku列=sku        命中 4
+  亚马逊墨西哥管理库存报告20261023.csv                               sku列=sku        命中 4
+  [表头乱码，按列位0/1兜底] 亚马逊日本管理库存报告20261023.csv
+  亚马逊日本管理库存报告20261023.csv                                sku列=0/1        命中 4
+  亚马逊欧盟管理库存报告20261023.csv                                sku列=sku        命中 4
+  亚马逊沙特阿拉伯管理库存报告20261023.csv                             sku列=sku        命中 0
+  [表头乱码，按列位0/1兜底] 亚马逊澳大利亚管理库存报告20261023.csv
+  亚马逊澳大利亚管理库存报告20261023.csv                              sku列=0/1        命中 0
+  亚马逊美国管理库存报告20261023.csv                                sku列=sku        命中 0
+  亚马逊英国管理库存报告20261023.csv                                sku列=sku        命中 1
+  亚马逊阿拉伯联合酋长国管理库存报告20261023.csv                          sku列=sku        命中 0
+  多国库存报告.csv                                             sku列=seller-sku 命中 0
+
+--- G598 : 库存命中 10 条 ---
+   [interflow加拿大管理库存报告20261023.csv] {"sku": "G598", "fnsku": "X005BSD8XN", "asin": "B0HLCMD4BV", "product-name": "Ibywind for Xiaomi Redmi 17 4G/5G Screen Protector,2 Pack,9H Hardness Tempered Glass and Camera Lens Protector,with Alignment Frame,Anti-Bubble,Fingerprint Unlock,Scratch Resistant,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow沙特阿拉伯管理库存报告20261021.csv] {"sku": "G598", "fnsku": "X002PEW5IR", "asin": "B0HLCMD4BV", "product-name": "Ibywind for Xiaomi Redmi 17 4G/5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Camera Lens Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow澳大利亚管理库存报告20261023.csv] {"asin": "B0HLCMD4BV"}
+   [interflow美国管理库存报告20261023.csv] {"sku": "G598", "fnsku": "X005BSD8XN", "asin": "B0HLCMD4BV", "product-name": "Ibywind for Xiaomi Redmi 17 4G/5G Screen Protector,2 Pack,9H Hardness Tempered Glass and Camera Lens Protector,with Alignment Frame,Full Coverage,Bubble Free,Fingerprint Unlock,Scratch Resistant", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "2", "afn-inbound-working-quantity": "2", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow阿拉伯联合酋长国管理库存报告20261023.cs] {"sku": "G598", "fnsku": "X002PEW5IR", "asin": "B0HLCMD4BV", "product-name": "Ibywind for Xiaomi Redmi 17 4G/5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Camera Lens Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊印度管理库存报告20261023.csv] {"sku": "G598", "fnsku": "X002PEUG2T", "asin": "B0HLCMD4BV", "product-name": "Ibywind for Xiaomi Redmi 17 4G/5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Camera Lens Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "2", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "2", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊墨西哥管理库存报告20261023.csv] {"sku": "G598", "fnsku": "X005BSJEU9", "asin": "B0HLCMD4BV", "product-name": "Ibywind Mica para Xiaomi Redmi 17 4G/5G,2 Piezas Dureza 9H Cristal Templado y Protector de Lente de C�mara,F�cil de Instalar,Compatible Detector Huellas,Anti Ara�azos,Sin Burbujas", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "2", "afn-inbound-working-quantity": "2", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊日本管理库存报告20261023.csv] {"asin": "B0HLCMD4BV"}
+   [亚马逊欧盟管理库存报告20261023.csv] {"sku": "G598", "fnsku": "X002PEJG6V", "asin": "B0HLCMD4BV", "product-name": "Ibywind Schutzfolie für Xiaomi Redmi 17 4G/5G,2 Stück 9H Panzer-Glas,mit Metall-Kameraschutz,einfache Installation,unterstützt Fingerabdrucksensor,anti-kratzer,blasenfreiheit,Bruchsicher,Öl resistent", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "318", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "318", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊英国管理库存报告20261023.csv] {"sku": "G598", "fnsku": "X002PEJG6V", "asin": "B0HLCMD4BV", "product-name": "Ibywind for Xiaomi Redmi 17 4G/5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Camera Lens Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "21", "afn-inbound-working-quantity": "21", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+
+--- G599 : 库存命中 9 条 ---
+   [interflow加拿大管理库存报告20261023.csv] {"sku": "G599", "fnsku": "X005DLWVUT", "asin": "B0HN6F8Z7J", "product-name": "Ibywind for vivo X500 Pro 5G Screen Protector,2 Pack,9H Hardness Tempered Glass and Camera Lens Protector,with Alignment Frame,Anti-Bubble,Fingerprint Unlock,Scratch Resistant,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow沙特阿拉伯管理库存报告20261021.csv] {"sku": "G599", "fnsku": "X002PZD7SD", "asin": "B0HN6F8Z7J", "product-name": "Ibywind for vivo X500 Pro 5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Camera Lens Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow澳大利亚管理库存报告20261023.csv] {"asin": "B0HN6F8Z7J"}
+   [interflow美国管理库存报告20261023.csv] {"sku": "G599", "fnsku": "X005DLWVUT", "asin": "B0HN6F8Z7J", "product-name": "Ibywind for vivo X500 Pro 5G Screen Protector,2 Pack,9H Hardness Tempered Glass and Camera Lens Protector,with Alignment Frame,Full Coverage,Bubble Free,Fingerprint Unlock,Scratch Resistant", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow阿拉伯联合酋长国管理库存报告20261023.cs] {"sku": "G599", "fnsku": "X002PZD7SD", "asin": "B0HN6F8Z7J", "product-name": "Ibywind for vivo X500 Pro 5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Camera Lens Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊印度管理库存报告20261023.csv] {"sku": "G599", "fnsku": "X002PZEPT3", "asin": "B0HN6F8Z7J", "product-name": "Ibywind for vivo X500 Pro 5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Camera Lens Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊墨西哥管理库存报告20261023.csv] {"sku": "G599", "fnsku": "X005DMCTJB", "asin": "B0HN6F8Z7J", "product-name": "Ibywind Mica para vivo X500 Pro 5G,2 Piezas Dureza 9H Cristal Templado y Protector de Lente de C�mara,F�cil de Instalar,Compatible Detector Huellas,Anti Ara�azos,Sin Burbujas", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊日本管理库存报告20261023.csv] {"asin": "B0HN6F8Z7J"}
+   [亚马逊欧盟管理库存报告20261023.csv] {"sku": "G599", "fnsku": "X002PWWHVJ", "asin": "B0HN6F8Z7J", "product-name": "Ibywind Schutzfolie für vivo X500 Pro 5G,2 Stück 9H Panzer-Glas,mit Metall-Kameraschutz,einfache Installation,unterstützt Fingerabdrucksensor,anti-kratzer,blasenfreiheit,Bruchsicher,Öl resistent", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+
+--- G600 : 库存命中 9 条 ---
+   [interflow加拿大管理库存报告20261023.csv] {"sku": "G600", "fnsku": "X005DIINEZ", "asin": "B0HN68NB3P", "product-name": "Ibywind for Xiaomi 18 Pro 5G Screen Protector,2 Pack,9H Hardness Tempered Glass,with Alignment Frame,Anti-Bubble,Fingerprint Unlock,Scratch Resistant,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow沙特阿拉伯管理库存报告20261021.csv] {"sku": "G600", "fnsku": "X002PWRJZD", "asin": "B0HN68NB3P", "product-name": "Ibywind for Xiaomi 18 Pro 5G Screen Protector,2-Pack,9H Hardness Tempered Glass,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow澳大利亚管理库存报告20261023.csv] {"asin": "B0HN68NB3P"}
+   [interflow美国管理库存报告20261023.csv] {"sku": "G600", "fnsku": "X005DIINEZ", "asin": "B0HN68NB3P", "product-name": "Ibywind for Xiaomi 18 Pro 5G Screen Protector,2 Pack,9H Hardness Tempered Glass,with Alignment Frame,Full Coverage,Bubble Free,Fingerprint Unlock,Scratch Resistant", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow阿拉伯联合酋长国管理库存报告20261023.cs] {"sku": "G600", "fnsku": "X002PWRJZD", "asin": "B0HN68NB3P", "product-name": "Ibywind for Xiaomi 18 Pro 5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Back Film Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊印度管理库存报告20261023.csv] {"sku": "G600", "fnsku": "X002PWMUGB", "asin": "B0HN68NB3P", "product-name": "Ibywind for Xiaomi 18 Pro 5G Screen Protector,2-Pack,9H Hardness Tempered Glass,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊墨西哥管理库存报告20261023.csv] {"sku": "G600", "fnsku": "X005DIIB0B", "asin": "B0HN68NB3P", "product-name": "Ibywind Mica para Xiaomi 18 Pro 5G,2 Piezas Dureza 9H Cristal Templado y Pel�cula protectora trasera,F�cil de Instalar,Compatible Detector Huellas,Anti Ara�azos,Sin Burbujas", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊日本管理库存报告20261023.csv] {"asin": "B0HN68NB3P"}
+   [亚马逊欧盟管理库存报告20261023.csv] {"sku": "G600", "fnsku": "X002PWRYK3", "asin": "B0HN68NB3P", "product-name": "Ibywind Schutzfolie für Xiaomi 18 Pro 5G,2 Stück 9H Panzer-Glas,mit einfache Installation,unterstützt Fingerabdrucksensor,anti-kratzer,blasenfreiheit,Bruchsicher,Öl resistent", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+
+--- G601 : 库存命中 9 条 ---
+   [interflow加拿大管理库存报告20261023.csv] {"sku": "G601", "fnsku": "X005DIDJXP", "asin": "B0HN6CYBSQ", "product-name": "Ibywind for Xiaomi 18 Pro Max 5G Screen Protector,2 Pack,9H Hardness Tempered Glass,with Alignment Frame,Anti-Bubble,Fingerprint Unlock,Scratch Resistant,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow沙特阿拉伯管理库存报告20261021.csv] {"sku": "G601", "fnsku": "X002PWTNP7", "asin": "B0HN6CYBSQ", "product-name": "Ibywind for Xiaomi 18 Pro Max 5G Screen Protector,2-Pack,9H Hardness Tempered Glass,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow澳大利亚管理库存报告20261023.csv] {"asin": "B0HN6CYBSQ"}
+   [interflow美国管理库存报告20261023.csv] {"sku": "G601", "fnsku": "X005DIDJXP", "asin": "B0HN6CYBSQ", "product-name": "Ibywind for Xiaomi 18 Pro Max 5G Screen Protector,2 Pack,9H Hardness Tempered Glass,with Alignment Frame,Full Coverage,Bubble Free,Fingerprint Unlock,Scratch Resistant", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [interflow阿拉伯联合酋长国管理库存报告20261023.cs] {"sku": "G601", "fnsku": "X002PWTNP7", "asin": "B0HN6CYBSQ", "product-name": "Ibywind for Xiaomi 18 Pro Max 5G Screen Protector,2-Pack,9H Hardness Tempered Glass with Back Film Protector,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊印度管理库存报告20261023.csv] {"sku": "G601", "fnsku": "X002PWU74N", "asin": "B0HN6CYBSQ", "product-name": "Ibywind for Xiaomi 18 Pro Max 5G Screen Protector,2-Pack,9H Hardness Tempered Glass,Easy Installation Tool,Bubble-Free,Fingerprint Unlock,Anti-Shatter,Anti-Scratch", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊墨西哥管理库存报告20261023.csv] {"sku": "G601", "fnsku": "X005DII02F", "asin": "B0HN6CYBSQ", "product-name": "Ibywind Mica para Xiaomi 18 Pro Max 5G,2 Piezas Dureza 9H Cristal Templado y Pel�cula protectora trasera,F�cil de Instalar,Compatible Detector Huellas,Anti Ara�azos,Sin Burbujas", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+   [亚马逊日本管理库存报告20261023.csv] {"asin": "B0HN6CYBSQ"}
+   [亚马逊欧盟管理库存报告20261023.csv] {"sku": "G601", "fnsku": "X002PWMSGD", "asin": "B0HN6CYBSQ", "product-name": "Ibywind Schutzfolie für Xiaomi 18 Pro Max 5G,2 Stück 9H Panzer-Glas,mit einfache Installation,unterstützt Fingerabdrucksensor,anti-kratzer,blasenfreiheit,Bruchsicher,Öl resistent", "afn-fulfillable-quantity": "0", "afn-reserved-quantity": "0", "afn-total-quantity": "0", "afn-inbound-working-quantity": "0", "afn-inbound-shipped-quantity": "0", "afn-inbound-receiving-quantity": "0", "store": ""}
+
+========================================================================================
+② 订单报告（20261023）—— 按 sku 列前缀匹配，统计销量
+========================================================================================
+  interflow北美站点202610订单报告.txt                            命中 {'G598': 1}
+  interflow沙特阿拉伯站点202610订单报告.txt                         无命中
+  interflow澳大利亚站点202610订单报告.txt                          无命中
+  interflow阿拉伯联合酋长国站点202610订单报告.txt                      无命中
+  亚马逊北美站点202610订单报告.txt                                  无命中
+  亚马逊印度站点202610订单报告.txt                                  无命中
+  亚马逊日本站点202610订单报告.txt                                  无命中
+  亚马逊欧盟站点202610订单报告.txt                                  无命中
+  亚马逊沙特阿拉伯站点202610订单报告.txt                               无命中
+  亚马逊澳大利亚站点202610订单报告.txt                                无命中
+  亚马逊英国站点202610订单报告.txt                                  无命中
+  亚马逊阿拉伯联合酋长国站点202610订单报告.txt                            无命中
+
+========================================================================================
+③ 12 本工作簿 A 列前缀匹配（含所有 sheet）
+========================================================================================
+
+--- G598 : 工作簿命中 19 处 ---
+   Interflowd北美加拿大库存销售表.xlsx       美国可售+在途库存                  行77     G598
+   Interflowd北美加拿大库存销售表.xlsx       加拿大可售+在途库存                 行77     G598
+   Interflowd北美加拿大库存销售表.xlsx       美国-每日库存分析表                 行81     G598
+   Interflowd澳大利亚库存销售表.xlsx        在途库存                       行77     G598
+   Interflowd澳大利亚库存销售表.xlsx        澳大利亚-每日库存分析表               行81     G598
+   Interflowd阿联酋库存销售表.xlsx         阿联酋在途库存                    行50     G598
+   北美加拿大库存销售表.xlsx                 美国可售+在途库存                  行441    G598
+   北美加拿大库存销售表.xlsx                 加拿大可售+在途库存                 行436    G598
+   北美加拿大库存销售表.xlsx                 墨西哥可售+在途库存                 行409    G598
+   北美加拿大库存销售表.xlsx                 墨西哥-每日库存分析表                行410    G598
+   印度库存销售表.xlsx                    在途库存                       行436    G598
+   印度库存销售表.xlsx                    印度-每日库存分析表                 行439    G598
+   日本库存销售表.xlsx                    可售+在途库存                    行444    G598
+   日本库存销售表.xlsx                    日本-每日库存分析表                 行448    G598
+   欧盟英国库存销售表.xlsx                  英国可售+在途库存                  行463    G598
+   欧盟英国库存销售表.xlsx                  欧洲可售+在途库存                  行462    G598
+   欧盟英国库存销售表.xlsx                  英国-每日库存分析表                 行466    G598
+   欧盟英国库存销售表.xlsx                  欧洲-每日库存分析表                 行465    G598
+   美客多库存销售表.xlsx                   墨西哥-每日库存分析表                行366    G598
+
+--- G599 : 工作簿命中 8 处 ---
+   Interflowd北美加拿大库存销售表.xlsx       美国可售+在途库存                  行80     G599
+   Interflowd北美加拿大库存销售表.xlsx       加拿大可售+在途库存                 行80     G599
+   Interflowd澳大利亚库存销售表.xlsx        在途库存                       行80     G599
+   Interflowd阿联酋库存销售表.xlsx         阿联酋在途库存                    行53     G599
+   北美加拿大库存销售表.xlsx                 墨西哥可售+在途库存                 行412    G599
+   印度库存销售表.xlsx                    在途库存                       行439    G599
+   日本库存销售表.xlsx                    可售+在途库存                    行448    G599
+   欧盟英国库存销售表.xlsx                  欧洲可售+在途库存                  行499    G599
+
+--- G600 : 工作簿命中 8 处 ---
+   Interflowd北美加拿大库存销售表.xlsx       美国可售+在途库存                  行78     G600
+   Interflowd北美加拿大库存销售表.xlsx       加拿大可售+在途库存                 行78     G600
+   Interflowd澳大利亚库存销售表.xlsx        在途库存                       行78     G600
+   Interflowd阿联酋库存销售表.xlsx         阿联酋在途库存                    行51     G600
+   北美加拿大库存销售表.xlsx                 墨西哥可售+在途库存                 行410    G600
+   印度库存销售表.xlsx                    在途库存                       行437    G600
+   日本库存销售表.xlsx                    可售+在途库存                    行446    G600
+   欧盟英国库存销售表.xlsx                  欧洲可售+在途库存                  行500    G600
+
+--- G601 : 工作簿命中 8 处 ---
+   Interflowd北美加拿大库存销售表.xlsx       美国可售+在途库存                  行79     G601
+   Interflowd北美加拿大库存销售表.xlsx       加拿大可售+在途库存                 行79     G601
+   Interflowd澳大利亚库存销售表.xlsx        在途库存                       行79     G601
+   Interflowd阿联酋库存销售表.xlsx         阿联酋在途库存                    行52     G601
+   北美加拿大库存销售表.xlsx                 墨西哥可售+在途库存                 行411    G601
+   印度库存销售表.xlsx                    在途库存                       行438    G601
+   日本库存销售表.xlsx                    可售+在途库存                    行447    G601
+   欧盟英国库存销售表.xlsx                  欧洲可售+在途库存                  行501    G601
