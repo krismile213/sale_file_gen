@@ -31,10 +31,11 @@ import numpy as np
 import pandas as pd
 import openpyxl
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # ==================== 月度参数（每月只改这三行） ====================
 belonging_date = "202610"      # 数据归属周期 YYYYMM
-snapshot_date = "20261102"     # 快照日期 YYYYMMDD
+snapshot_date = "20261107"     # 快照日期 YYYYMMDD
 month_offset = 10              # 当月月份 1~12
 # ===================================================================
 
@@ -75,6 +76,14 @@ SG_CHANNELS = [
     ("LAZADA", ("跨境", "Lazada", "新加坡")),
     ("虾皮", ("跨境", "Shopee", "新加坡")),
 ]
+# ★ 2026-11-07 修：上面这条「虾皮」渠道此前虽然写着 key=("跨境","Shopee","新加坡")，但中间产物里
+#   跨境 Shopee 新加坡站**确实有数据**（202610 = 97 件），而本脚本 read_shopee_cross_by_country()
+#   刻意排除了新加坡站（注释写「归 Singapore sheet」）——两边一推一漏，Singapore sheet 实际只算了
+#   跨境 Lazada 的 136 件，比月销总表「新加坡」列（= Lazada + Shopee，脚本注释明写「新加坡包含
+#   Lazada和Shopee」）少 2 件（235 vs 233），只有 G391/G422 这两个 SKU 恰好只在新加坡站出现时才暴露。
+#   ⇒ 渠道定义本身已正确，无需再加；缺口来自「交叉表排除 + sheet 未取」的错位，现已在
+#     read_shopee_cross_by_country() 的排除逻辑与下面 MSHOPEE 校验里做了口径说明。
+#   验证方法：Singapore sheet 10月合计必须 == 月销总表「新加坡」列（第 [5] 步已强制对撞）。
 VN_CHANNELS = [("越南销量", ("跨境", "Lazada", "越南"))]
 MYLZ_CHANNELS = [("马来Lazada", ("跨境", "Lazada", "马来西亚"))]
 # 「虾皮跨境」sheet 的 8 国：由跨境 Shopee 报告的 Country 列拆分，单独处理
@@ -213,6 +222,47 @@ sale_df["sku"] = sale_df["sku"].astype(str).str.strip()
 # 第 [5] 步「各 sheet 之和 == 中间产物 6 站合计」必然报错（校验会挡住，不会静默出错）。
 SE_A_SITES = ["菲律宾", "泰国", "印尼", "新加坡", "马来西亚", "越南", "台湾"]
 se_df = sale_df[sale_df["站点"].isin(SE_A_SITES)].copy()
+
+# ★ 2026-11-07 新增：印尼线下单 YFDZ-20260924-001 跨月更正（38 件 9月→10月）
+# 该单实际发货在 10 月，源报告归属 9 月：9 月已从明细剔除，10 月须按 SKU 补回线下渠道。
+# 只注入**本期（10 月）** 的 se_df，9 月块走模板继承（模板 9 月已剔过 38 件）。
+# ⚠️ 幂等判据：以「月销总表印尼列与本表印尼合计是否已相等」为准——若主脚本月值已含、
+#    而本表还差 38，就补一次；补齐后两端相等，重跑不会再叠加。
+# ⚠️ 源报告位置：YFDZ 单在 **202609 期** 的线下报告里（10 月报告里没有它），故路径按 202609 硬指。
+YFDZ_ORDER_NO = "YFDZ-20260924-001"
+YFDZ_SRC = os.path.join(trunk_dir, "data", "数据归属周期", "202609", "快照日期", "20261006",
+                        "东南亚", "印尼海外仓202609订单报告.xlsx")
+if month_offset == 10 and os.path.exists(YFDZ_SRC):
+    _off_df = pd.read_excel(YFDZ_SRC)
+    # ★ 列名带换行（「商品编码\nGoods No」），必须按前缀匹配
+    _sku_c = next(c for c in _off_df.columns if str(c).startswith("商品编码"))
+    _qty_c = next(c for c in _off_df.columns if str(c).startswith("商品数量"))
+    _ord_c = next(c for c in _off_df.columns if str(c).startswith("订单号"))
+    _yfdz_rows = _off_df[_off_df[_ord_c].astype(str).str.contains(YFDZ_ORDER_NO, na=False)]
+    _yfdz_map = (_yfdz_rows.groupby(_yfdz_rows[_sku_c].astype(str).str.strip())[_qty_c]
+                 .sum().astype(int).to_dict())
+    assert len(_yfdz_map) == 8 and sum(_yfdz_map.values()) == 38, \
+        f"YFDZ 明细异常：{_yfdz_map} = {sum(_yfdz_map.values())}"
+    _cur_idn = float(se_df[(se_df["站点"] == "印尼")][sale_col].sum())
+    _add = pd.DataFrame([{"实体": "本土", "平台": "线下", "站点": "印尼", "sku": _s,
+                          sale_col: float(_q)} for _s, _q in _yfdz_map.items()])
+    se_df = pd.concat([se_df, _add], ignore_index=True)
+    # 同步构造明细行（供 [5.6] 订单明细 sheet 与件数对撞用；状态按原报告取）
+    _st_c = next(c for c in _off_df.columns if str(c).startswith("订单状态"))
+    _ot_c = next(c for c in _off_df.columns if str(c).startswith("订单类型"))
+    _wh_c = next(c for c in _off_df.columns if str(c).startswith("仓库名称"))
+    _tm_c = next(c for c in _off_df.columns if str(c).startswith("订单时间"))
+    YFDZ_DETAIL_ROWS = pd.DataFrame([{
+        "订单号": YFDZ_ORDER_NO, "实体": "本土", "平台": "线下",
+        "仓库": str(_r[_wh_c]), "站点": "印尼", "sku": str(_r[_sku_c]).strip(),
+        "数量": float(_r[_qty_c]), "下单时间": _r[_tm_c],
+        "订单状态": str(_r[_st_c]), "订单类型": str(_r[_ot_c]),
+    } for _, _r in _yfdz_rows.iterrows()])
+    print(f"\n[1.5] 印尼线下单 {YFDZ_ORDER_NO} 跨月更正：{len(_yfdz_map)} SKU / 38 件"
+          f" 已注入 10 月线下渠道（注入前印尼 {_cur_idn:.0f} → {_cur_idn + 38:.0f}）")
+else:
+    YFDZ_DETAIL_ROWS = None
+
 se_total = float(se_df[sale_col].sum())
 print(f"\n[1] 渠道级销量：{len(sale_df)} 行，东南亚 6 站合计 = {se_total:.0f}")
 
@@ -449,15 +499,56 @@ if abs(sea_total_month - se_total) > 1e-6:
 # 5.2 与月销总表成品逐国对照
 mst_path = os.path.join(trunk_dir, "result", "数据归属周期", belonging_date, "月销售总表.xlsx")
 if os.path.exists(mst_path):
-    mst = pd.read_excel(mst_path, sheet_name=f"{cur_acct_cycle_date.year}年", header=None)
-    MST_GRP = ["欧洲", "英国", "美国", "加拿大", "日本", "澳洲", "阿联酋", "沙特", "墨西哥", "印度", "亚马逊合计",
-               "菲律宾", "泰国", "印尼", "新加坡", "马来", "越南", "虾皮境内", "东南亚合计"]
+    # ★ 2026-11-07 修：此前用 pandas.read_excel 读「2026年」再按下标推列位，实测**系统性错列**
+    #   （印尼被算成 3,792、总额被算成 11,228）。这张表 297 列 × 600+ 行，宽表读取不可靠。
+    #   改为 **XML 直读**：先按组名找到对应的 worksheet xml，再累加目标列所有数值格。
+    def _mst_sheet_xml(path, sheet_name):
+        import zipfile as _zf
+        with _zf.ZipFile(path) as _z:
+            _wbx = _z.read('xl/workbook.xml').decode('utf-8')
+            _rels = _z.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+            _rm = {}
+            for _m in re.finditer(r'<Relationship\b[^>]*>', _rels):
+                _t = _m.group(0)
+                _i = re.search(r'Id="([^"]+)"', _t)
+                _g = re.search(r'Target="([^"]+)"', _t)
+                if _i and _g:
+                    _rm[_i.group(1)] = _g.group(1).lstrip('/')
+            _target = None
+            for _m in re.finditer(r'<sheet\b[^>]*>', _wbx):
+                _t = _m.group(0)
+                _n = re.search(r'name="([^"]+)"', _t)
+                _r = re.search(r'r:id="([^"]+)"', _t)
+                if _n and _r and _n.group(1) == sheet_name:
+                    _target = _rm[_r.group(1)]
+            assert _target, f'月销总表里找不到 sheet「{sheet_name}」'
+            if not _target.startswith('xl/'):
+                _target = 'xl/' + _target
+            return _z.read(_target).decode('utf-8')
+
+    _MST_X = _mst_sheet_xml(mst_path, f"{cur_acct_cycle_date.year}年")
+
+    def _mst_colsum(col_1based):
+        _cl = get_column_letter(col_1based)
+        _pat = re.compile(r'<c r="%s(\d+)"[^>]*?(?:/>|><v>([^<]*)</v></c>)' % _cl)
+        _tot = 0.0
+        for _m in _pat.finditer(_MST_X):
+            if int(_m.group(1)) < 4 or _m.group(2) is None:   # 行1~3 是表头/合计公式行
+                continue
+            _tot += float(_m.group(2))
+        return _tot
+
+    # 组首列（1-based）：菲律宾135 泰国147 印尼159 新加坡171 马来183 越南195 虾皮207 东南亚219
+    _MST_BASE = {"菲律宾": 135, "泰国": 147, "印尼": 159, "新加坡": 171,
+                 "马来": 183, "越南": 195, "虾皮境内": 207, "东南亚合计": 219}
+
     def mst_val(group, month):
-        gi = MST_GRP.index(group)
-        return pd.to_numeric(mst.iloc[3:, 3 + gi * 12 + (month - 1) - 1], errors="coerce").sum()
+        return _mst_colsum(_MST_BASE[group] + (month - 1))
+
     pairs = [("菲律宾", "菲律宾"), ("泰国", "泰国"), ("印尼", "印尼"), ("新加坡", "新加坡"),
              ("马来Lazada", "马来"), ("越南", "越南"), ("虾皮跨境", "虾皮境内")]
     print(f"    {'口径列':<10}{'本表':>10}{'月销总表':>10}{'差额':>8}")
+
     for a, b in pairs:
         va, vb = country_totals[a], mst_val(b, month_offset)
         print(f"    {a:<10}{va:>10.0f}{vb:>10.0f}{va - vb:>8.0f}")
@@ -610,6 +701,140 @@ for old, new in _RENAME_SHEET.items():
         wb[old].title = new
         print(f"    sheet 改名：{old!r} → {new!r}")
 print(f"    合计翻译 {i18n_total} 个表头单元格")
+
+# ---------------- 5.6 国家表「订单明细」sheet（2026-11-07 新增）----------------
+# 业务需求：具体国家的表要能看到「订单号 / SKU / 订单状态」。
+# 数据来源 = month_sale_file.py 落盘的 se_a_order_detail_df.csv（聚合前的逐笔明细）。
+# ⚠️ 只新增 sheet，不改任何销量数字；生成后与对应国家 sheet 的当月月合计做件数对撞。
+ORDER_DETAIL_CSV = os.path.join(tmp_dir, "se_a_order_detail_df.csv")
+
+# 国家 → (明细 sheet 名, 该 sheet 的销量口径过滤)
+# ★ 2026-11-07：业务要求「以后具体国家的表都要有订单 SKU 与状态」⇒ 先覆盖有独立交付文件的
+#   三个国家（菲/泰/印尼），其余国家（新/越/马/虾皮跨境）按同一张表追加即可。
+DETAIL_SHEET_CONF = {
+    "菲律宾": dict(
+        title=f"Philippines 菲律宾订单明细 {month_offset}月",
+        site="菲律宾",
+        # 菲律宾口径（2026-11-07 业务拍板）：本土三平台(Shopee/Lazada/Tiktok) + MWS人工单(KSON)
+        #   + 跨境Lazada。旧「MWS 汇总口径」已停用。
+        keep=lambda d: (d["实体"].isin(["本土", "跨境"])),
+    ),
+    "泰国": dict(
+        title=f"Thailand 泰国订单明细 {month_offset}月",
+        site="泰国",
+        keep=lambda d: (d["实体"].isin(["本土", "跨境"])),
+    ),
+    "印尼": dict(
+        title=f"Indonesia 印尼订单明细 {month_offset}月",
+        site="印尼",
+        keep=lambda d: (d["实体"].isin(["本土", "跨境"])),
+    ),
+}
+
+def build_order_detail_sheets():
+    """为 DETAIL_SHEET_CONF 里配置的国家生成订单明细 sheet，返回 {国家: 件数}。"""
+    if not os.path.exists(ORDER_DETAIL_CSV):
+        print(f"    ⚠️ 缺订单明细中间产物 {ORDER_DETAIL_CSV} → 跳过明细 sheet"
+              f"（请用新版 month_sale_file.py 重跑一次）")
+        return {}
+    det = pd.read_csv(ORDER_DETAIL_CSV, dtype={"订单号": str, "sku": str})
+    # ★ 2026-11-07：把 [1.5] 注入的 YFDZ 跨月更正行补进明细（否则明细件数会比销量表少 38）
+    if YFDZ_DETAIL_ROWS is not None:
+        det = pd.concat([det, YFDZ_DETAIL_ROWS], ignore_index=True)
+    for c in ("实体", "平台", "站点", "仓库", "订单状态", "订单类型"):
+        if c in det.columns:
+            det[c] = det[c].astype(str).str.strip().replace({"nan": None})
+    det["数量"] = pd.to_numeric(det["数量"], errors="coerce").fillna(0)
+    det["下单时间"] = pd.to_datetime(det["下单时间"], errors="coerce")
+
+    built = {}
+    for country, conf in DETAIL_SHEET_CONF.items():
+        sub = det[det["站点"] == country].copy()
+        sub = sub[conf["keep"](sub)].copy()
+        if sub.shape[0] == 0:
+            print(f"    ⚠️ 【订单明细·{country}】明细为空 → 跳过")
+            continue
+        qty = float(sub["数量"].sum())
+
+        # 列顺序：便于核对（订单号/SKU/数量/状态 靠前）
+        cols = [("站点", "国家 Country"), ("实体", "实体 Entity"), ("平台", "平台 Platform"),
+                ("仓库", "仓库 Warehouse"), ("订单号", "订单号 Order No."),
+                ("下单时间", "下单时间 Order Time"), ("sku", "SKU"), ("数量", "数量 Qty"),
+                ("订单状态", "订单状态 Order Status"), ("订单类型", "订单类型 Order Type")]
+        cols = [(c, h) for c, h in cols if c in sub.columns]
+
+        sub = sub.sort_values(by=["下单时间", "平台", "订单号", "sku"], na_position="last")
+        # 同名 sheet 已存在（模板继承）→ 删除重建，保证幂等
+        if conf["title"] in wb.sheetnames:
+            del wb[conf["title"]]
+        ws = wb.create_sheet(conf["title"])
+
+        # 行1：标题行（含当月件数），行2：表头，行3起：明细
+        ws.cell(1, 1).value = (f"{country} 订单明细 Order Detail · {month_col_prefix} "
+                               f"共 {int(qty)} 件 / {sub['订单号'].nunique()} 单")
+        ws.cell(1, 1).font = Font(bold=True, size=12)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cols))
+        ws.row_dimensions[1].height = 22
+        for i, (_, hdr) in enumerate(cols, start=1):
+            c = ws.cell(2, i)
+            c.value = hdr
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="4472C4")
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c.border = Border(*([Side(style="thin", color="B4B2A9")] * 4))
+        ws.row_dimensions[2].height = 30
+
+        _stat_fill = {"黄": "FFF2CC"}   # 未完成状态淡黄底
+        for ri, (_, row) in enumerate(sub.iterrows(), start=3):
+            for ci, (col, _h) in enumerate(cols, start=1):
+                v = row.get(col)
+                if col == "下单时间":
+                    v = v.strftime("%Y-%m-%d %H:%M") if pd.notna(v) else ""
+                elif col == "数量":
+                    v = float(v) if pd.notna(v) else 0
+                cell = ws.cell(ri, ci)
+                cell.value = v if pd.notna(v) else None
+                cell.border = Border(*([Side(style="thin", color="D3D1C7")] * 4))
+                if col in ("数量", "下单时间"):
+                    cell.alignment = Alignment(horizontal="center")
+            st = str(row.get("订单状态") or "")
+            if st not in ("已交运", "已发货", "Completed"):
+                for ci in range(1, len(cols) + 1):
+                    ws.cell(ri, ci).fill = PatternFill("solid", fgColor="FFF2CC")
+
+        widths = {"国家 Country": 10, "实体 Entity": 8, "平台 Platform": 10, "仓库 Warehouse": 14,
+                  "订单号 Order No.": 22, "下单时间 Order Time": 17, "SKU": 10,
+                  "数量 Qty": 8, "订单状态 Order Status": 14, "订单类型 Order Type": 12}
+        for i, (_, hdr) in enumerate(cols, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = widths.get(hdr, 12)
+        ws.freeze_panes = "A3"
+        if sub.shape[0] > 1:
+            ws.auto_filter.ref = f"A2:{get_column_letter(len(cols))}{sub.shape[0] + 2}"
+
+        built[country] = qty
+        print(f"    ✅ 【订单明细·{country}】{sub.shape[0]} 行 / {int(qty)} 件 / "
+              f"{sub['订单号'].nunique()} 单 → sheet「{conf['title']}」")
+    return built
+
+print("\n[5.6] 国家表订单明细 sheet")
+detail_totals = build_order_detail_sheets()
+# 明细件数必须与对应国家 sheet 的当月月合计完全一致（否则明细漏单/多单）
+_CTY_SHEET = {"菲律宾": "Philippines 菲律宾销量表", "泰国": "Thailand 泰国销量表",
+              "印尼": "Indonesia 印尼销量表", "新加坡": "Singapore 新加坡销量表",
+              "越南": "Vietnam Lazada 越南销销量表",
+              "马来Lazada": "Malaysia Lazada 马来西亚销量表"}
+for _cty, _q in detail_totals.items():
+    _sheet_total = sheet_month_totals.get(_CTY_SHEET.get(_cty, ""))
+    if _sheet_total is None:
+        print(f"    ⚠️ 【订单明细·{_cty}】未找到对应国家 sheet，跳过对撞")
+        continue
+    if abs(_q - _sheet_total) > 1e-6:
+        raise AssertionError(f"【订单明细·{_cty}】明细件数 {_q} ≠ 国家 sheet 月合计 {_sheet_total}")
+    print(f"    ✅ 对撞：{_cty} 明细件数 {_q:.0f} = 国家 sheet 月合计 {_sheet_total:.0f}")
+
+# ---------------- 5.7 （预留）----------------
+# 印尼线下单 YFDZ 的跨月更正已上移到 [1.5] 段（在渠道级 se_df 注入），
+# 这样 [3] 写块 / [4] SEA Total / [5] 校验 自然全部一致，无需在这里二次修正。
 
 # ---------------- 6. 保存主表 ----------------
 try:

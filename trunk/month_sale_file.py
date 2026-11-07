@@ -1294,6 +1294,7 @@ def sum_shopee_cross_site(cur_acct_cycle_date:datetime.date, processed_month_sal
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1315,6 +1316,7 @@ def sum_total_southeast_asia_site(cur_acct_cycle_date:datetime.date, processed_m
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1336,6 +1338,7 @@ def sum_se_single_site(cur_acct_cycle_date:datetime.date, processed_month_sale_d
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1357,6 +1360,7 @@ def sum_se_local_site(cur_acct_cycle_date:datetime.date, processed_month_sale_df
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1373,6 +1377,7 @@ def sum_jingdong_site(cur_acct_cycle_date:datetime.date, processed_month_sale_df
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1389,6 +1394,7 @@ def sum_emag_site(cur_acct_cycle_date:datetime.date, processed_month_sale_df:pd.
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1405,6 +1411,7 @@ def sum_temu_site(cur_acct_cycle_date:datetime.date, processed_month_sale_df:pd.
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1421,6 +1428,7 @@ def sum_mercado_site(cur_acct_cycle_date:datetime.date, processed_month_sale_df:
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1436,6 +1444,7 @@ def sum_total_site(cur_acct_cycle_date:datetime.date, processed_month_sale_df:pd
             suffix = ""
         located_col_name = f"{month_offset}月{suffix}"
         processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+        processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
         processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
     return processed_month_sale_df
 
@@ -1881,6 +1890,20 @@ if __name__ == "__main__":
     assert f"{cur_acct_cycle_date.strftime('%Y%m')}销量" in se_a_sku_sale_df.columns, "东南亚销量表列名重命名失败（groupby聚合列名与预期不符）"
     se_a_sku_sale_df["asin"] = se_a_sku_sale_df["sku"].map(sku_asin_map)
     se_a_sku_sale_df.to_csv(os.path.join(tmp_dir,"se_a_sku_sale_df.csv"))
+    # ===== 2026-11-07 新增：东南亚「逐笔订单明细」中间产物（供国家表订单明细 sheet 使用）=====
+    # 业务需求：具体国家的表要能看到「订单号 / SKU / 订单状态」。
+    # 这里把聚合前的逐笔明细落盘（只保留展示与核对需要的列），东南亚脚本据此生成明细 sheet。
+    # ⚠️ 只做落盘、不改变任何既有口径或产物 —— 销量数字仍以 se_a_sku_sale_df.csv 为准。
+    _detail_cols = ["订单号", "实体", "平台", "仓库", "站点", "sku", "数量", "下单时间", "订单状态", "订单类型"]
+    _detail_df = total_last30d_se_a_order_df.copy()
+    for _c in _detail_cols:
+        if _c not in _detail_df.columns:
+            _detail_df[_c] = None
+    _detail_df = _detail_df[_detail_cols].copy()
+    _detail_df["数量"] = pd.to_numeric(_detail_df["数量"], errors="coerce")
+    _detail_df = _detail_df[_detail_df["数量"].notna()]
+    _detail_df.to_csv(os.path.join(tmp_dir, "se_a_order_detail_df.csv"), index=False)
+    print(f"【订单明细中间产物】{len(_detail_df)} 行 → se_a_order_detail_df.csv")
     #其他渠道
     total_last30d_other_order_df = pd.DataFrame({})
     entity = "巨川"
@@ -1998,6 +2021,7 @@ if __name__ == "__main__":
                     suffix = ""
                 located_col_name = f"{month_offset}月{suffix}"
                 processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+                processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
                 processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
         #处理亚马逊合计
         if group == "亚马逊":
@@ -2012,6 +2036,7 @@ if __name__ == "__main__":
                     suffix = ""
                 located_col_name = f"{month_offset}月{suffix}"
                 processed_month_sale_df[located_col_name] = processed_month_sale_df[f"{cur_acct_cycle_date.strftime('%Y%m')}销量"]
+                processed_month_sale_df[located_col_name] = processed_month_sale_df[located_col_name].fillna(0)  # ★2026-11-07 补 0：merge(how=left) 只给「本月有销量」的 SKU 赋值，归零 SKU 会残留模板旧值
                 processed_month_sale_df.drop(f"{cur_acct_cycle_date.strftime('%Y%m')}销量", axis=1, inplace=True)
         #包含了本土和跨境
         se_a_local_group = ["菲律宾","印尼","泰国"]
