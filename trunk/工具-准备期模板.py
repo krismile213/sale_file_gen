@@ -250,7 +250,8 @@ def main():
     tag = "[dry-run] " if args.dry_run else ""
     print(f"{tag}结果：就位 {ok} / 跳过 {skip} / 冲突 {conflict} / 缺失 {miss}")
     if miss or conflict:
-        print("⚠️ 有模板没准备好，先解决上面 ❌ / ⚠️ 再跑生成脚本。")
+        print("⚠️ 有模板没准备好 / 或源期成品与「定案数字」对不上，先解决上面 ❌ / ⚠️ 再跑生成脚本。")
+        print("   （若确认源期成品已是最新定案版，可加 --skip-number-check 跳过对撞）")
         return 2
 
     print()
