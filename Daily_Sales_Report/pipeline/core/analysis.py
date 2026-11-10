@@ -49,7 +49,10 @@ DATA_FIRST_ROW = 7
 # 置 False 完全回退旧行为（别名当独立 SKU 处理）。
 AMZN_GR_MERGE = True
 _AMZN_GR_RE = _re2.compile(r"^amzn\.gr\.", _re2.I)
-_SKU_HEAD_RE = _re2.compile(r"^([A-Z]{1,3}\d{3,4}[A-Z]{0,3}(?:[-_ ]\d+(?=[-_ ]|$))?)")
+_SKU_HEAD_RE = _re2.compile(r"^([A-Z]{1,3}\d{2,4}[A-Z]{0,3}(?:[-_ ]\d+(?=[-_ ]|$))?)")
+# 2026-11-03 \d{3,4} → \d{2,4}：库存/订单里实测存在两位数基础 SKU 的别名
+# （amzn.gr.G53-…-VG / G86 / G94 / G95 / G98，裸 G53 欧洲 5 件、英国 39 件），
+# 原正则不认 → 别名归并不掉，库存侧拆成两行、月度封存侧继续丢这份销量。
 
 
 def normalize_sku(s):
@@ -156,19 +159,61 @@ def _brand_col(ws, max_scan=140):
     return None
 
 
+# 品名关键词 → 品牌。**顺序敏感**：先匹配到的先返回，所以「具体」排在「笼统」前。
+# 2026-11-07 扩充：原表只有 14 个品牌，Nothing/Infinix/Tecno/Huawei/nubia/Blackshark/FCNT
+# 全部猜不到 → 补行时品牌列空着，看起来像「没填」，实际是 brand_of 不认识。
+_BRAND_KEYS = (
+    ("Sony", ("sony", "xperia")),
+    ("Poco", ("poco",)),
+    ("Motorola", ("motorola", "moto ")),
+    ("Samsung", ("samsung", "galaxy z", "galaxy s", "galaxy a")),
+    ("Apple", ("iphone", "ipad", "apple")),
+    ("Honor", ("honor", "荣耀")),
+    ("Oppo", ("oppo", "reno")),
+    ("Vivo", ("vivo", "iqoo")),
+    ("Realme", ("realme", "narzo")),
+    ("Google", ("google", "pixel")),
+    ("OnePlus", ("oneplus", "one plus")),
+    ("Nokia", ("nokia",)),
+    ("Nothing", ("nothing phone", "nothing (")),
+    ("Infinix", ("infinix",)),
+    ("Tecno", ("tecno",)),
+    ("Huawei", ("huawei", "pura ", "mate ")),
+    ("Blackshark", ("black shark", "blackshark", "blackshark")),
+    ("努比亚", ("nubia", "redmagic", "red magic", "zte ")),
+    ("FCNT", ("fcnt", "arrows")),
+    ("华硕", ("asus", "rog phone", "zenfone")),
+    ("小米", ("xiaomi", "小米")),
+    ("Redmi", ("redmi", "红米")),
+)
+
+
 def brand_of(name):
-    """从品名猜品牌（英文优先，其次中文）。猜不到返回 ''。"""
-    n = name or ""
-    for b in ("Sony", "Poco", "Motorola", "Samsung", "Apple", "Honor", "Oppo",
-              "Vivo", "Realme", "Google", "OnePlus", "Nokia", "iPhone"):
-        if b.lower() in n.lower():
-            return b
-    if "Xiaomi" in n or "Redmi" in n or "红米" in n:
-        return "Redmi"
-    if "小米" in n:
-        return "小米"
-    if "苹果" in n:
-        return "苹果"
+    """从品名猜品牌。猜不到返回 ''。
+
+    ⚠️ 2026-11-07 踩坑：原实现只认 14 个品牌，Nothing/Infinix/Tecno/Huawei/nubia/
+    Blackshark/FCNT 一律返回 ''，补行时品牌列留空 → 之后被误认为「iPhone 兜底」。
+    这里补全品牌表，**猜不到就返回空**，不再瞎给一个（宁可空着也别填错）。
+    """
+    n = (name or "").lower()
+    if not n:
+        return ""
+    for brand, keys in _BRAND_KEYS:
+        for k in keys:
+            if k in n:
+                return brand
+    return ""
+
+
+def brand_from_master(sku):
+    """先用商品资料取品牌（权威），查不到再回落到 brand_of(品名)。"""
+    try:
+        import product_master as _pm
+        b = (_pm.attrs(sku) or {}).get("brand")
+        if b and str(b).strip():
+            return str(b).strip()
+    except Exception:
+        pass
     return ""
 
 
@@ -283,7 +328,8 @@ def append_sku_rows_auto(ws, new_skus, name_map=None, clear_range=None, state_ma
 
     · 克隆**列最完整的那一行**（pick_template_row，不是死认末行）→ 保证新行带齐
       AD/AE/AF/AG、日销列、月度汇总区；公式平移 / 文本属性照抄 / 货件列清空
-    · A=SKU，B=品名（name_map），品牌列=brand_of(品名)（可判时覆盖克隆来的旧品牌）
+    · A=SKU，B=品名（name_map），品牌列=商品资料品牌→brand_of(品名)（都取不到则清空，
+      不再继承模板行的品牌）
     · state_map={sku: "在售"/"在途"/"未上架"} → 覆盖 D 列状态
       （clone_row 会照抄模板行，必须显式改）
     · 条件格式范围末行自动跟随（grow_cf_last_row）
@@ -309,9 +355,12 @@ def append_sku_rows_auto(ws, new_skus, name_map=None, clear_range=None, state_ma
             # D=状态。clone_row 已把末行状态抄过来，这里按 listing 实况覆盖
             ws.cell(last, 4).value = state_map[sku]
         if bcol:
-            b = brand_of(nm)
-            if b:
-                ws.cell(last, bcol).value = b
+            # 品牌优先级：商品资料（权威）→ 品名猜 → 空。
+            # 2026-11-07 修：原写法 `if b:` 不成立就保留 clone_row 抄来的模板行品牌，
+            # 于是大批新行继承了模板行的 iPhone/Realme/一加（美国表 r394~446 全变 iPhone）。
+            # 猜不到必须**显式清空**，否则错值会一直挂着。
+            b = brand_from_master(sku) or brand_of(nm)
+            ws.cell(last, bcol).value = b if b else None
         have.add(sku)
         out.append((last, sku))
     if out:
@@ -663,19 +712,21 @@ def _materialize_col_ranges(ws, cols):
 
 
 def sync_day_outline(ws, snap_date):
-    """按快照日同步日列「组合」。幂等。返回 (hidden_cols[list], button_col|None)。"""
+    """按快照日同步日列「组合」。幂等。返回 (hidden_cols[list], button_col|None)。
+    2026-11-03 起折叠上界=日列窗口末端（窗口平移后含次月列，如 10/25~12/31）。"""
     import datetime as _dt, calendar
     d0 = _dt.date.fromisoformat(snap_date) if isinstance(snap_date, str) else snap_date
-    month_end = _dt.date(d0.year, d0.month, calendar.monthrange(d0.year, d0.month)[1])
     days = day_columns(ws)
     if not days:
         return [], None
-    hidden = [c for c, d in days if d0 <= d <= month_end]
+    win_end = days[-1][1]
+    # 2026-11-03 用户反馈「3号的隐藏了」→ 折叠边界改为快照日**次日**起（当天列保持可见）
+    hidden = [c for c, d in days if d0 < d <= win_end]
     button = max(hidden) + 1 if hidden else None
     # 先把日列（含折叠按钮列）所在的区间列定义拆成单列 —— 否则列宽会被重置（见 _materialize_col_ranges）
     _materialize_col_ranges(ws, [c for c, _ in days] + ([button] if button else []))
     for c, d in days:
-        if d0 <= d <= month_end:
+        if d0 < d <= win_end:
             _set_col(ws, c, outline=1, hidden=True, collapsed=False)
         else:
             _set_col(ws, c, outline=0, hidden=False, collapsed=False)

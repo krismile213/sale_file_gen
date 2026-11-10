@@ -122,18 +122,30 @@ def shift_sheet_xml(xml, sheet_name, at, n, other_sheets):
     xml = re.sub(r'<dimension ref="([^"]+)"/>', dim_rep, xml)
 
     # 3) cols 定义（跨界的拆开）
+    #    ⚠️ 兼容属性顺序：col 元素的 min/max 可能在前（openpyxl 格式）也可能在尾
+    #    （历史 XML 手术格式 <col outlineLevel="1" ... min="9" max="29"/>）。
+    #    旧正则只认 min/max 在前 → min/max 在尾的元素不右移 → 货件列 outline 丢失/错位。
     def cols_rep(mm):
         blk = mm.group(0)
+
         def one(cm):
-            mn, mx = int(cm.group(1)), int(cm.group(2))
+            a = cm.group(1)
+            gm, gx = re.search(r'\bmin="(\d+)"', a), re.search(r'\bmax="(\d+)"', a)
+            if not (gm and gx):
+                return cm.group(0)
+            mn, mx = int(gm.group(1)), int(gx.group(1))
+            rest = re.sub(r'\b(min|max)="(\d+)"\s*', "", a)
+            rest = re.sub(r"\s+", " ", rest).strip()
+            tail = (" " + rest) if rest else ""
             if mx < at:
                 return cm.group(0)
             if mn >= at:
-                return '<col min="%d" max="%d"%s/>' % (mn + n, mx + n, cm.group(3))
-            left = '<col min="%d" max="%d"%s/>' % (mn, at - 1, cm.group(3))
-            right = '<col min="%d" max="%d"%s/>' % (at + n, mx + n, cm.group(3))
+                return '<col min="%d" max="%d"%s/>' % (mn + n, mx + n, tail)
+            left = '<col min="%d" max="%d"%s/>' % (mn, at - 1, tail)
+            right = '<col min="%d" max="%d"%s/>' % (at + n, mx + n, tail)
             return left + right
-        return re.sub(r'<col min="(\d+)" max="(\d+)"([^/>]*)/>', one, blk)
+
+        return re.sub(r"<col\b([^>]*?)/>", one, blk)
     xml = re.sub(r"<cols>.*?</cols>", cols_rep, xml, flags=re.S)
 
     # 4) mergeCells / CF / DV 的 sqref

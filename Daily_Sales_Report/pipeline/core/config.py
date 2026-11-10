@@ -293,6 +293,42 @@ EU_CHANNELS = ["Amazon.co.uk", "Amazon.de", "Amazon.fr", "Amazon.it", "Amazon.es
                "Amazon.nl", "Amazon.se", "Amazon.pl", "Amazon.ie", "Amazon.com.be"]
 NA_CHANNELS = ["Amazon.com", "Amazon.ca", "Amazon.com.mx"]
 
+# ---------- eMAG 订单报告列名别名（2026-11-04 修复，P0）----------
+# eMAG 后台切界面语言会连同**导出报告的列名**一起变，列序与含义完全不变：
+#   英文（202608）：Order number / Order date / Product code / Quantity / Order status
+#   中文（202609/202610）：订单编号 / 订单日期 / 产品代码 / 数量 / 订单状态
+#   罗马尼亚语（202611）：Nr. comanda / Data comenzii / Cod produs / Cantitate / Status comanda
+# 工作簿「订单数据」表头是**中文正典**，append_sales 靠表头名做列映射与去重键定位。
+# 不做归一的后果（已实际发生、静默）：`报告缺去重键列 '订单编号'` → **整份报告跳过**，
+#   10 月漏 13 件、11 月订单整月不入库；且不报错只打一行日志。
+# 归一放在报告读取之后、建 rep_idx 之前，覆盖全部列（能对上的都映射，对不上不影响）。
+EMAG_COL_ALIAS = {
+    # --- 罗马尼亚语 → 中文正典 ---
+    "Nr. comanda": "订单编号", "Data comenzii": "订单日期", "Numar AWB": "空运提单号码",
+    "Nume produs": "产品名称", "Cod produs": "产品代码", "Cantitate": "数量",
+    "Pret fara TVA/buc": "不含增值税价格/件", "Pret total cu TVA": "含增值税价格",
+    "Moneda": "货币", "TVA": "增值税", "Status comanda": "订单状态",
+    "Mod plata": "付款方式", "Mod livrare": "发货方式",
+    "ID extern punct de livrare": "派送地点外部ID",
+    "Denumire punct de livrare": "派送地点名称",
+    "Status plata": "付款状态",
+    "Data maxima finalizare": "最晚完成日期",
+    "Data maxima de predare": "交货的最长期限",
+    "Nume client": "客户姓名", "Persoana juridica": "是法人", "Numar VAT": "增值税号",
+    "Numar telefon": "电话号码", "Nume livrare": "交货方名称",
+    "Telefon livrare": "交货电话", "Adresa de livrare": "送货地址",
+    "Cod postal de livrare": "送货邮编", "Nume facturare": "发票持有人",
+    "Adresa de facturare": "开票地址", "Cod postal de facturare": "发票邮编",
+    "Observatii": "评述",
+    # --- 英文 → 中文正典 ---
+    "Order number": "订单编号", "Order date": "订单日期", "AWB number": "空运提单号码",
+    "Product name": "产品名称", "Product code": "产品代码", "Quantity": "数量",
+    "Price without VAT/unit": "不含增值税价格/件", "Price with VAT": "含增值税价格",
+    "Currency": "货币", "VAT": "增值税", "Order status": "订单状态",
+    "Payment method": "付款方式", "Shipping method": "发货方式",
+    "Payment status": "付款状态", "Customer name": "客户姓名",
+}
+
 WORKBOOKS = [
     dict(
         file="欧盟英国库存销售表.xlsx",
@@ -391,8 +427,16 @@ WORKBOOKS = [
     dict(
         file="Interflowd北美加拿大库存销售表.xlsx",
         stocks=[
-            dict(sheet="美国可售+在途库存", report="interflow美国管理库存报告{d}.csv", kind="inv"),
-            dict(sheet="加拿大可售+在途库存", report="interflow加拿大管理库存报告{d}.csv", kind="inv"),
+            # 库存报告：精确名优先，再回退到「任意日期的最新一份」。
+            # interflow 后台的库存导出**文件名日期不会自动更新**（20261110 快照里
+            # 美国/沙特/英国三份都还叫 …20261106.csv，但内容确实是当天的）。
+            # 死认 {d} → 天天判「缺报告」→ 库存永不更新（2026-11-10 又踩一次）。
+            dict(sheet="美国可售+在途库存",
+                 report=["interflow美国管理库存报告{d}.csv",
+                         "interflow美国管理库存报告*.csv"], kind="inv"),
+            dict(sheet="加拿大可售+在途库存",
+                 report=["interflow加拿大管理库存报告{d}.csv",
+                         "interflow加拿大管理库存报告*.csv"], kind="inv"),
         ],
         records=["美国库存记录", "加拿大库存记录", "美国预留库存记录", "加拿大预留库存记录"],
         sales=dict(sheet="每日销售数据", report="interflow北美站点{m}订单报告.txt", sep="\t",
@@ -451,6 +495,33 @@ WORKBOOKS = [
                    # （错账号实测 10~15%）。下调到 0.2 保留抓错能力。
                    sku_gate_min=0.2),
     ),
+    # Interflowd英国（2026-11-06 新建）
+    # 起因：FBA15MRX4YLH（EMA5 英国仓，185 件 / 3 SKU）被 interflow 兜底分支算成"美国"，
+    # 写进 Interflowd北美「美国」表 L 列 —— 美国库存报告里 G599/G600/G601 的在途为 0，
+    # 这 185 件永远到不了货。G599/G600/G601 在「欧盟英国簿-英国表」里根本没有行
+    # （主账号 UK 报告 467 个 SKU 全不命中），也不能塞主账号簿 ⇒ 独立成簿。
+    # ⚠️ 报告还没下载：optional=True 时缺报告只告警、不算体检硬伤（否则每次跑批 exit 2）。
+    #    拿到 interflow 英国站的库存/订单导出后放进快照目录，按下面命名即可自动接上：
+    #      interflow英国管理库存报告{YYYYMMDD}.csv   /  interflow英国站点{YYYYMM}订单报告.txt
+    dict(
+        file="Interflowd英国库存销售表.xlsx",
+        stocks=[
+            dict(sheet="英国可售库存",
+                 report=["interflow英国管理库存报告{d}.csv",
+                         "interflow*英国*管理库存报告*.csv"], kind="balance",
+                 optional=True),
+            dict(sheet="英国在途库存",
+                 report=["interflow英国管理库存报告{d}.csv",
+                         "interflow*英国*管理库存报告*.csv"], kind="inv",
+                 optional=True),
+        ],
+        records=[],
+        sales=dict(sheet="每日销售数据英国",
+                   report=["interflow英国站点{m}订单报告.txt",
+                           "interflow*英国*订单报告.txt"], sep="\t",
+                   expect_channel=["Amazon.co.uk"], optional=True),
+    ),
+
     # 美客多：库存明细 ← ML后台"库存总览(Resumen)"报告（Full仓状态，5个sheet取Resumen页），
     # 整块替换+锚点A1滚动，已接入；订单数据 ← ML后台月度订单报告（xlsx）。
     # 订单报告按月下载，当月报告每天重复导入（# de venta 去重，幂等）；上月终版报告绝对路径常驻。
@@ -482,9 +553,57 @@ WORKBOOKS = [
         stocks=[dict(sheet="库存明细", report="EMAG罗马尼亚库存报告{d}.xlsx", kind="emag_stock")],
         records=[],
         sales=dict(sheet="订单数据", report="EMAG全站点{m}订单报告.xlsx",
-                   sep=None, key="订单编号"),   # xlsx 报告；订单编号唯一可做去重键
+                   sep=None, key="订单编号",   # xlsx 报告；订单编号唯一可做去重键
+                   col_alias=EMAG_COL_ALIAS),  # 三语列名归一（2026-11-04）
     ),
 ]
+
+# ---------- 「分析表 → 库存 sheet」对照（2026-11-06 在途对账收窄用） ----------
+# 背景：`transit_audit.inv_for()` 原先把**整簿所有** stocks 报告合并成一个 inv 字典，
+# 再拿去和**每一张**分析表比。单站点簿没问题，但多站点簿会串味：
+#   欧盟英国簿 = 欧盟 40895 件 + 英国 4943 件 → 合并后两表都拿 45838 件当分母，
+#   英国表实测「差异率 +79.6%」（真实 52.9%）；北美簿墨西哥表「+89.6%」（真实 99.9%）。
+# 因此必须**按 sheet 收窄**：每张分析表只吃自己站点的 kind="inv" 报告。
+#   · kind="balance" 是同一份报告的「可售库存」副本（北美簿 3 份、沙特/印度等）→ 必须排除，
+#     否则同一个 SKU 的在途被数两遍；
+#   · kind="multi"（多国库存）不是 inv 报告 → 排除。
+# 下面这张表把「分析表名（去尾空格）」映射到「库存 sheet 名」；表里没列的走
+# `_guess_stock_sheet()` 的宽松匹配（去掉"XX-"前缀与"可售+在途库存/在途库存"后缀再比）。
+ANALYSIS_TO_STOCK = {
+    "英国-每日库存分析表": "英国可售+在途库存",
+    "欧洲-每日库存分析表": "欧洲可售+在途库存",
+    "美国-每日库存分析表": "美国可售+在途库存",
+    "加拿大-每日库存分析表": "加拿大可售+在途库存",
+    "墨西哥-每日库存分析表": "墨西哥可售+在途库存",
+    "日本-每日库存分析表": "可售+在途库存",
+    "印度-每日库存分析表": "在途库存",
+    "澳大利亚-每日库存分析表": "在途库存",
+    "沙特阿拉伯-每日库存分析表": "沙特阿拉伯在途库存",
+    "沙特-每日库存分析表": "沙特在途库存",
+    "阿联酋-每日库存分析表": "阿联酋在途库存",
+    "罗马尼亚-每日库存分析表": None,      # 无 afn-* inv 报告（emag_stock 是优惠更新文件）
+}
+
+
+def stock_sheet_for(analysis_sheet):
+    """分析表名 → 对应的库存 sheet 名（`stocks[]` 里 kind="inv" 的那条）。
+
+    返回 None 表示这本簿没有对应的在途库存报告（如美客多 Full / eMAG）。
+    ⚠️ 分析表名可能带尾空格（北美簿「墨西哥-每日库存分析表 」），先 strip。"""
+    name = str(analysis_sheet or "").strip()
+    if name in ANALYSIS_TO_STOCK:
+        return ANALYSIS_TO_STOCK[name]
+    # 宽松匹配：去掉「XX-」前缀和常见后缀，取核心站点词
+    core = name.split("-", 1)[-1].replace("每日库存分析表", "").strip()
+    for b in WORKBOOKS:
+        for s in b.get("stocks", []):
+            if s.get("kind") != "inv":
+                continue
+            sh = str(s.get("sheet", "")).strip()
+            if sh and core and core in sh:
+                return sh
+    return None
+
 
 # 库龄报告(age)字段 → 管理库存(inv)字段 的映射（写值时统一成 inv 名）
 AGE_FIELD_MAP = {
@@ -533,6 +652,9 @@ ML_STATUS_MAP = {
     "配送已重新安排": "Envío reprogramado",          # 1 (K25)
     "Mercado Libre取消的包裹": "Paquete cancelado por Mercado Libre",            # 0 (K26 cancelado)
     "包含 2 件商品的包裹": "Paquete de 2 productos",   # 正典实况（14 行）: 非取消态，SKU=' ' 由公式守卫判 0
+    # 2026-11-04 补：中文界面导出的在途态 / 投诉态（原表未覆盖 → c65 #N/A 判不计销）
+    "我们将在明天发出包裹": "Enviaremos el paquete mañana",       # 1（C2 无命中，靠 c4 的 envío）
+    "支持退货的投诉": "Reclamo con devolución habilitada",        # 0（含 devolución，与月销表同口径）
 }
 # 状态(c3) 动态模板：{d}=文本中的数字, {snap}=快照日西语日期('10 de octubre')
 # 有效性与正典对照：'Enviaremos el paquete el 21 de septiembre'缓存=1（靠D2 'Para organizar los
@@ -595,6 +717,24 @@ ML_DESC_PATTERNS = [
     # 退货审核描述 → K24 'reembolsamos' → 0（C2 K21 兜底）
     (r"^我们已验证商品正确且状况良好。已向买家退款。$",
      "Validamos que es el producto correcto y está en buenas condiciones. Le reembolsamos el dinero al comprador."),
+    # ======== 2026-11-04 补：中文界面里「当日/预计送达时间」家族（全部 → K5 'Llega' → 1）========
+    # 实测 10 月有 63 件因此被判 #N/A（不计销），月销表侧算作有效 → 日销少 63 件。
+    # '今日21点前送达。' / '今日19点前送达。' / '今日18点前送达。'
+    (r"^今日(?P<h>\d{1,2})点前送达。?$", "Llega hoy antes de las {h}"),
+    # '今日20:45点前送达。' / '今日18:45点前送达。'
+    (r"^今日(?P<h>\d{1,2}):(?P<mi>\d{2})点前送达。?$", "Llega hoy antes de las {h}"),
+    # '预计今日 16 点至 21 点送达。'（原规则要求"16 点至 21 点"全带空格，实际有 19:25/18:45 变体）
+    (r"^预计今日 (?P<h1>\d{1,2})(?::(?P<m1>\d{2}))? 点?至 (?P<h2>\d{1,2})(?::(?P<m2>\d{2}))? 点?送达。?$",
+     "Llega hoy entre las {h1} y las {h2}"),
+    # 机翻残留的「到達 十月 29 之間。和 十一月 3。」（= Llega entre el 29 de octubre y el 3 de noviembre）
+    (r"^到達 (?P<zhm>\S+) (?P<d>\d{1,2}) 之間。和 (?P<zhm2>\S+) (?P<d2>\d{1,2})。?$",
+     "Llega entre el {d} de {m} y el {d2} de {m2}"),
+    # '为协调发货，我们将于明天寄出包裹。'（"明天"变体没进原规则的 {d}月{月}日 形态）
+    (r"^为协调发货，我们将于明天寄出包裹。?$",
+     "Para organizar los envíos, enviaremos el paquete mañana."),
+    # '您可以在今天至明天 15 点前将包裹送至 Mercado Libre 服务点…'（原规则只写了今天）
+    (r"^(您可以在今天至明天|您需要在今天至明天) ?\d{1,2} 点前将包裹送至 Mercado Libre 服务点.*$",
+     "Para organizar los envíos, podrás imprimir la etiqueta el {snap}."),
 ]
 ML_WEEKDAYS = {"一": "lunes", "二": "martes", "三": "miércoles", "四": "jueves",
                "五": "viernes", "六": "sábado", "日": "domingo"}

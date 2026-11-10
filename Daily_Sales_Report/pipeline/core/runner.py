@@ -531,6 +531,9 @@ def ml_norm_desc(s, snap_date):
                 gd["m"] = C.ML_MONTHS[gd["zhm"]]
             else:
                 gd["m"] = _zh_or_es_month(re.sub(r"星期.月", "", s), snap_date)
+            # 双月份模式（'到達 十月 29 之間。和 十一月 3。' → {zhm2}→{m2}）
+            if gd.get("zhm2"):
+                gd["m2"] = C.ML_MONTHS.get(gd["zhm2"], _zh_or_es_month(s, snap_date))
             gd.setdefault("d", "")
             gd.setdefault("d2", "")
             gd.setdefault("snap", _es_snap(snap_date))
@@ -722,6 +725,78 @@ def extend_stock_record(wb, sheet_name, until_date_str):
 # ID 类列保持文本（人工口径=Excel导入向导按文本处理；写成 int 会被显示成 1.7E+14 科学计数法）
 TEXT_COLS = {"order-item-id", "order-id", "asin1", "isbn", "fnsku", "订单编号", "# de venta"}
 
+# sales-channel → 地区名（辅助列「地区」用，2026-11-07）
+_CH2SITE = {
+    "Amazon.com": "美国", "Amazon.ca": "加拿大", "Amazon.com.mx": "墨西哥",
+    "Amazon.com.au": "澳大利亚", "Amazon.co.jp": "日本", "Amazon.in": "印度",
+    "Amazon.co.uk": "英国", "Amazon.de": "欧洲", "Amazon.fr": "欧洲",
+    "Amazon.it": "欧洲", "Amazon.es": "欧洲", "Amazon.nl": "欧洲",
+    "Amazon.se": "欧洲", "Amazon.pl": "欧洲", "Amazon.com.be": "欧洲",
+    "Amazon.ae": "阿联酋", "Amazon.sa": "沙特阿拉伯",
+}
+
+
+def _fill_aux_values(ws, first_row, last_row, col_names, allow_temu=False):
+    """把 purchase date / 有效性 / 地区 三个辅助列按**静态值**写入 [first_row, last_row]。
+
+    为什么要静态（2026-11-07 用户拍板）：这三列原本是公式（LEFT(C,10)、IF(E<>...
+    、IF(G=...))，但 openpyxl 每次存盘都会把公式缓存清空；只要没人用 Excel/WPS
+    重算，它们对 SUMIFS 就是空白 → 分析表 AH(当月销量)=0 → AD(实时速度) 恒 0 →
+    断货判断全错。实测 Interflowd 北美 G547 日均算成 1.4，正解 (4+2+3+2+3)/5=2.8。
+
+    口径（与原有公式逐字一致）：
+      purchase date = LEFT(purchase-date, 10)
+      有效性        = (order-status != "Cancelled" 且 MID(sales-channel,1,7)="Amazon.")
+                      北美系簿额外放行 Non-Amazon*（TEMU / Non-Amazon CA）
+      地区          = sales-channel → 站点名；未登记的渠道写渠道原值
+    """
+    from datetime import datetime as _dt
+    # 定位原始列
+    raw = {}
+    for col, h in (col_names or {}).items():
+        hl = str(h or "").strip().lower()
+        if hl == "purchase-date":
+            raw.setdefault("date", col)
+        elif hl == "order-status":
+            raw.setdefault("status", col)
+        elif hl == "sales-channel":
+            raw.setdefault("channel", col)
+    if len(raw) < 3:
+        return
+    # 定位辅助列（表头「purchase date」带空格，与原生「purchase-date」区分）
+    aux = {}
+    for col, h in (col_names or {}).items():
+        hs = str(h or "").strip()
+        if hs.lower() == "purchase date":
+            aux.setdefault("date", col)
+        elif hs == "有效性":
+            aux.setdefault("valid", col)
+        elif hs == "地区":
+            aux.setdefault("site", col)
+    if not aux:
+        return
+    for r in range(first_row, last_row + 1):
+        ch = ws.cell(row=r, column=raw["channel"]).value
+        ch = "" if ch is None else str(ch).strip()
+        st = ws.cell(row=r, column=raw["status"]).value
+        st = "" if st is None else str(st).strip()
+        pd_ = ws.cell(row=r, column=raw["date"]).value
+        if isinstance(pd_, _dt):
+            d = pd_.strftime("%Y-%m-%d")
+        elif pd_ is None:
+            d = ""
+        else:
+            d = str(pd_).strip()[:10]
+        ok = (st != "Cancelled") and ch[:7] == "Amazon."
+        if not ok and allow_temu and ch.startswith("Non-Amazon"):
+            ok = True
+        if "date" in aux:
+            ws.cell(row=r, column=aux["date"]).value = d
+        if "valid" in aux:
+            ws.cell(row=r, column=aux["valid"]).value = 1 if ok else 0
+        if "site" in aux:
+            ws.cell(row=r, column=aux["site"]).value = _CH2SITE.get(ch, ch)
+
 
 def fix_id_text(ws):
     """存量修复：ID 类长数字列的 int → 文本。幂等，每天跑无害。"""
@@ -907,7 +982,7 @@ def screen_sku_overlap(body, sku_idx, stock_skus, book, report_path, min_rate=0.
 
 
 def append_sales(ws, report_path, sep="\t", key=None, expect_channel=None, book=None,
-                 stock_skus=None, allow_mixed=False):
+                 stock_skus=None, allow_mixed=False, col_alias=None):
     hdr = _header_row(ws)
     headers = {str(c.value).strip(): c.column for c in ws[hdr] if c.value is not None}
     oid_col = (headers.get(key) if key else None) \
@@ -941,6 +1016,11 @@ def append_sales(ws, report_path, sep="\t", key=None, expect_channel=None, book=
             have.add(str(oidv).strip())
     # 读报告（xlsx 或 txt/csv）
     hdr_rep, body = _read_report_rows(report_path)
+    # 报告列名别名归一（2026-11-04 eMAG 修复）：eMAG 导出语言会变（中文/英文/罗马尼亚语），
+    # 列序含义完全一致，只在表头名上不同。不归一的后果是去重键列找不到 → **整份静默跳过**
+    # （10月漏 13 件、11月整月不入库）。归一后再建 rep_idx，下游列映射全部照旧。
+    if col_alias:
+        hdr_rep = [col_alias.get(str(h).strip(), h) for h in hdr_rep]
     rep_idx = {h.strip(): i for i, h in enumerate(hdr_rep)}
     # 列映射
     col_map = {c: rep_idx[h] for h, c in headers.items() if h in rep_idx}
@@ -961,7 +1041,10 @@ def append_sales(ws, report_path, sep="\t", key=None, expect_channel=None, book=
     h_oid = key if (key and key in headers) else ("order-item-id" if "order-item-id" in headers else "amazon-order-id")
     oi = rep_idx.get(h_oid)
     if oi is None:
-        print(f"    [销售] {ws.title}: 报告缺去重键列 {h_oid!r}，跳过")
+        print(f"    [销售] {ws.title}: 报告缺去重键列 {h_oid!r}，跳过"
+              f"（报告表头前几列={[str(h)[:18] for h in hdr_rep[:4]]}）")
+        print(f"    [销售] ✗✗ 整份报告被跳过 = 今天的订单一条都没进库！"
+              f"先看是不是平台导出换了语言（列名不同、列序相同）→ 在 config 的列别名表里补上")
         return None
     # 窗口下界过滤：月度报告按"最后更新日期"导出，会混入 purchase-date 更老的行
     # （2024/2025 退款散单、上月窗口外的单）——挡在窗口外，保持当月表【上月7天+当月】口径
@@ -1026,6 +1109,14 @@ def append_sales(ws, report_path, sep="\t", key=None, expect_channel=None, book=
             L = get_column_letter(col)
             ws.cell(row=r, column=col).value = Translator(f0, origin=f"{L}{first_row}").translate_formula(f"{L}{r}")
         n += 1
+    # 辅助列静态值（2026-11-07）：purchase date / 有效性 / 地区 三列原本靠公式，
+    # 但 openpyxl 每次存盘都会清空公式缓存 → 一旦没人用 Excel 重算，这三列就是
+    # 空白，分析表日销公式 SUMIFS($AK,$AO,$AM) 匹配不到任何行 → AH=0 → 实时速度恒 0
+    # → 断货判断全错（实测 Interflowd 北美 G547 日均算成 1.4，正解 2.8）。
+    # 因此追加行后立刻按原始列算好静态值写下去，不再依赖公式。
+    if n:
+        _allow_temu = any(k in (book or "") for k in ("北美", "美国", "加拿大"))
+        _fill_aux_values(ws, first_row, r, col_names, allow_temu=_allow_temu)
     # autoFilter 扩展
     af = ws.auto_filter.ref
     if af:
@@ -1484,19 +1575,26 @@ def _month_summary_from_msx(pm_y, pm_m, site):
     事后修正——resolve 重算永远对不齐上报数。用户拍板（11-03「都修」）：
     分析表上月封存列**优先取月销总表**，对不齐的问题在源头（月销表）修。
 
-    路径：{PROJECT}/trunk/result/数据归属周期/{YYYYMM}/月销售总表.xlsx
+    路径：{PROJECT}/trunk/result/数据归属周期/{YYYYMM}/月销售总表*.xlsx
     结构：行1 块标签（C=欧洲/O=英国/AA=美国/AM=加拿大/AY=日本/BK=澳洲/BW=阿联酋/
           CI=沙特/CU=墨西哥/DG=印度），行2 块内 1~12月，行4+ A=SKU。
     找不到簿/块/月列返回 None，调用方回落 resolve 重算（老行为）。
     结果带模块级缓存（13 簿 × 2 分析表每天会读 26 次）。
+    ⚠️ 2026-11-04 修：原来硬编码 `月销售总表.xlsx`，实际文件叫「月销售总表（10月）.xlsx」
+    → 路径永远不存在、静默回落 resolve（任务㉒ 的直取其实一直是死代码）。改精确名优先 +
+    glob 兜底最新。
     """
     key = (pm_y, pm_m, site)
     if key in _MSX_CACHE:
         return _MSX_CACHE[key]
     out = None
     period = "%04d%02d" % (pm_y, pm_m)
-    path = os.path.join(C.PROJECT, "trunk", "result", "数据归属周期", period,
-                        "月销售总表.xlsx")
+    base = os.path.join(C.PROJECT, "trunk", "result", "数据归属周期", period)
+    path = os.path.join(base, "月销售总表.xlsx")
+    if not os.path.exists(path):
+        import glob as _glob
+        cands = sorted(_glob.glob(os.path.join(base, "月销售总表*.xlsx")))
+        path = cands[-1] if cands else path
     wb = None
     try:
         if os.path.exists(path):
@@ -1544,6 +1642,60 @@ def _month_summary_from_msx(pm_y, pm_m, site):
 MSX_DIRECT_SITES = {"欧洲", "英国", "日本", "印度"}
 
 
+# 站点后缀别名（2026-11-04）：分析表行 SKU 用的是**订单原始 SKU**（含站点尾码，
+# 如欧洲 G261IT / 日本 G433J / 印度 G332I / 日本 SKU139），而月销总表按产品把尾码
+# 折掉（G261 / G433 / G332 / G139）——同一产品在两套 SKU 空间里各叫一个名。
+# freeze_month 只做精确匹配 → 折过的月销值写不进带尾码的行，逐 SKU 永远差 181/131/…
+# （总量互相抵消，所以只看合计发现不了）。这里在写封存列前做一次「唯一候选」对齐。
+_SKU_SITE_SUFFIXES = ("IT", "J", "I", "UK", "FR", "DE", "ES", "JP", "US", "CA",
+                      "AU", "IN", "AE", "SA", "MX", "PL", "SE", "NL", "BE", "TR", "IE")
+
+
+def _align_month_skus(ws, ms, sheet_name=""):
+    """月销总表 {SKU: 件数} 对齐到分析表 A 列 SKU 空间。返回 (新dict, 未命中{sku:qty})。
+
+    规则（保守，宁可漏配也不错配）：
+      1. 精确命中直接用（G139 优先于 SKU139 这类并存情形）；
+      2. 没命中 → 试「基础SKU + 站点尾码」与「SKU### ↔ G###」两种变体，
+         **只有唯一候选**才写；多个候选视为歧义，跳过并计数。
+    """
+    import analysis as _An
+    rows, smap = [], {}
+    for r in range(_An.DATA_FIRST_ROW, _An.DATA_FIRST_ROW + 3000):
+        v = ws.cell(r, 1).value
+        if v is None:
+            continue
+        k = str(v).strip()
+        if not k:
+            continue
+        rows.append(k)
+        smap.setdefault(k.upper(), k)
+    if not rows:
+        return dict(ms), {}
+    out, miss = {}, {}
+    for k, v in ms.items():
+        ku = str(k).strip().upper()
+        if ku in smap:
+            out[smap[ku]] = out.get(smap[ku], 0) + v
+            continue
+        cands = [smap[ku + s] for s in _SKU_SITE_SUFFIXES if (ku + s) in smap]
+        if ku.startswith("SKU") and ("G" + ku[3:]) in smap:
+            cands.append(smap["G" + ku[3:]])
+        # 反向：月销值是带尾码的写法，分析表只有基础 SKU
+        for s in _SKU_SITE_SUFFIXES:
+            if ku.endswith(s) and ku[:-len(s)] in smap:
+                cands.append(smap[ku[:-len(s)]])
+        cands = list(dict.fromkeys(cands))
+        if len(cands) == 1:
+            out[cands[0]] = out.get(cands[0], 0) + v
+        else:
+            miss[str(k)] = miss.get(str(k), 0) + v
+    if miss:
+        print(f"    [月汇总] {sheet_name or ws.title}: {len(miss)} 个月销SKU在分析表无对应行"
+              f"（{sum(miss.values()):.0f} 件），无法写入：{list(miss)[:6]}")
+    return out, miss
+
+
 def apply_month_summary(wb, snap_day, fname=""):
     """全簿通用：月汇总区「上月封存 + 当月列滚动」。
     口径自动提取自各分析表日销列 SUMIFS 公式（analysis.scan_analysis / resolve_month_sales），
@@ -1582,8 +1734,13 @@ def apply_month_summary(wb, snap_day, fname=""):
             _site = sn.split("-")[0].strip() if "分析" in sn else None
             if _site:
                 _site = {"澳大利亚": "澳洲", "沙特阿拉伯": "沙特"}.get(_site, _site)
+            # Interflowd 孪生簿（含 2026-11-06 新建的英国簿）**不能**直取月销总表：
+            # 月销总表的「英国」块是主账号英国站，interflow 英国的量不在里面，
+            # 直取会把主账号的数写进 interflow 簿（反向也一样）。一律走归档簿 resolve。
+            _is_int = str(fname).startswith("Interflowd")
             _ms_msx = (_month_summary_from_msx(pm_y, pm_m, _site)
-                       if _site in getattr(C, "MSX_DIRECT_SITES", MSX_DIRECT_SITES) else None)
+                       if (_site in getattr(C, "MSX_DIRECT_SITES", MSX_DIRECT_SITES)
+                           and not _is_int) else None)
             for ym, mm in ((prev_ym, pm_m), (cur_ym, m)):
                 col = mc.get(mm)
                 if col is None:
@@ -1601,6 +1758,9 @@ def apply_month_summary(wb, snap_day, fname=""):
                         continue
                     tag = ("归档簿" if adaily is not None
                            else "当前簿(缺归档,上月可能少算!)") if ym == prev_ym else "当前簿"
+                # SKU 空间对齐（2026-11-04）：月销总表折掉站点尾码（G261 vs G261IT），
+                # 分析表行是订单原始 SKU，精确匹配写不进去 → 唯一候选变体对齐。
+                ms, _miss = _align_month_skus(ws, ms, sn)
                 nf = An.freeze_month(ws, col, ms)
                 if ym == prev_ym:
                     # 上月日均同步刷新为活公式：=IF(封存列="","",ROUND(封存列/天数,2))，
@@ -2137,6 +2297,12 @@ def apply_shipments(wb, snap_day, fname=""):
             print(f"    [货件] {real}: 回收「已到货」列 {len(recycle)} 个 {sorted(Sh.col_letter(c) for c in recycle)}")
         if overflow:
             print(f"    [货件] {real}: !! 列位不足 {overflow}")
+        # 货件列按发货日期从旧到新（2026-11-06 用户要求）：只重排行1/行5/数据区，
+        # 行2-4/6 是每列自引用公式，不随货件搬。已升序时零写入。
+        _nmv, _ncol = Sh.sort_shipment_cols(ws, fc, lc)
+        if _nmv:
+            print(f"    [货件] {real}: 按发货日期重排 {_nmv}/{_ncol} 列"
+                  f"（{Sh.col_letter(fc)}~{Sh.col_letter(lc)}，从旧到新）")
 
 
 def _anchor_skip_why(skipped, sheet_missing):
@@ -2145,7 +2311,8 @@ def _anchor_skip_why(skipped, sheet_missing):
     return f"库存报告缺/空: {miss}" if miss else "无库存报告"
 
 
-def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="2026-10-06"):
+def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="2026-10-06",
+            status_fix=True):
     f = wb_cfg["file"]
     print(f"\n==== {f} ====")
     if wb_cfg.get("skip"):
@@ -2251,6 +2418,16 @@ def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="20
                 print(f"    [dry] 库存记录不加列（无源报告数据/无日期列）: {rn}")
         for sc, rp in sales_plans:
             print(f"    [dry] 销售append: {sc['sheet']} ← {os.path.basename(rp)}")
+        if status_fix and any(sc.get("kind") != "ml_sales" for sc, _ in sales_plans):
+            try:
+                import status_sync as SS
+                _rep_f, _nrep = SS.load_reports(
+                    [rp for sc, rp in sales_plans if sc.get("kind") != "ml_sales"])
+                if _nrep:
+                    print(f"    [dry] 取消单回写: 订单报告 {_nrep} 份合并 {len(_rep_f)} 单"
+                          f"（实跑时报告终态 Cancelled → 回写明细状态+qty）")
+            except Exception as e:
+                print(f"    [dry] 取消单回写: 预演失败 {e!r}")
         anchors_ok = bool(stock_plans) and not stock_skipped and not stock_sheet_missing
         if f in C.ANCHORS:
             if anchors_ok:
@@ -2261,8 +2438,18 @@ def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="20
         return dict(file=f, hard=[], soft=[], dry=True)
 
     if not stock_plans and not sales_plans:
-        print("    [i] 无可用报告，整份跳过（不写文件）")
-        return dict(file=f, hard=["无可用报告，整份跳过"], soft=[])
+        # 全部条目都标了 optional（新接入站点，报告还没下载，如 2026-11-06 的 Interflowd英国）：
+        # 不算硬伤，照常往下走 —— 货件列/月汇总/结构维护都还要跑，只是库存销量今日不更新。
+        _items = list(wb_cfg.get("stocks") or [])
+        _s1 = wb_cfg.get("sales")
+        if _s1:
+            _items += _s1 if isinstance(_s1, list) else [_s1]
+        if _items and all((it or {}).get("optional") for it in _items):
+            print("    [i] 报告尚未下载（本簿全部标 optional）→ 只跑货件/月汇总/结构，"
+                  "库存与销量今日不更新")
+        else:
+            print("    [i] 无可用报告，整份跳过（不写文件）")
+            return dict(file=f, hard=["无可用报告，整份跳过"], soft=[])
     backup([f], snap_day)
     orig = path
     tmp = path + ".new.xlsx"
@@ -2332,11 +2519,56 @@ def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="20
                 r = append_sales(wb[sc["sheet"]], rp, sc.get("sep") or "\t", key=sc.get("key"),
                                  expect_channel=sc.get("expect_channel"), book=f,
                                  stock_skus=stock_sku_set,
-                                 allow_mixed=bool(sc.get("allow_mixed_channel")))
+                                 allow_mixed=bool(sc.get("allow_mixed_channel")),
+                                 col_alias=sc.get("col_alias"))
             if r:
                 sales_stats.append(r)
         else:
             print(f"    [!] sheet 不存在: {sc['sheet']}")
+    # 日常取消单回写（2026-11-04 用户拍板：方案B 日常化）——append_sales 只灌新单
+    # 不回写状态，订单取消后明细仍是 Pending/qty=1，日销列 SUMIFS 照算（虚高且永不
+    # 回退）。此处用**当天报告终态**把 Cancelled 回写进明细（状态+quantity 两列，
+    # 不增删行、不动公式），日销列随之回落；月列冻结仍只在换月封存时做
+    # （month_rollover → status_sync.fix_workbook）。失败只提示不炸簿：月末封存前
+    # status_sync 还有全量兜底，最坏=当月虚高照旧（与 2026-11-03 前行为一致）。
+    if status_fix:
+        try:
+            import status_sync as SS
+            _rep_f, _nrep = SS.load_reports(
+                [rp for sc, rp in sales_plans if sc.get("kind") != "ml_sales"])
+            _tot = _qt = 0
+            if _rep_f:
+                for sc, _rp in sales_plans:
+                    sn = sc["sheet"]
+                    if sc.get("kind") == "ml_sales" or sn not in wb.sheetnames:
+                        continue
+                    st = SS.fix_sales_sheet(wb[sn], _rep_f, dry=dry)
+                    if st.get("ok") and st["fixed"]:
+                        _tot += st["fixed"]
+                        _qt += st["qty"]
+                        print(f"    [回写] {sn}: 校正 {st['fixed']} 行 / {st['qty']:.0f} 件 → Cancelled/qty=0")
+                _tag = f"合计 {_tot} 行 / {_qt:.0f} 件" if _tot else "无需校正"
+                print(f"    [回写] 取消单回写{_tag}（订单报告 {_nrep} 份"
+                      f"{'，预演未落盘' if dry else ''}）")
+            # eMAG 等「报告列名带别名」的渠道：状态口径不同（Canceled/Storno，且只改状态不改数量）
+            for sc, _rp in sales_plans:
+                if not sc.get("col_alias"):
+                    continue
+                sn = sc["sheet"]
+                if sn not in wb.sheetnames:
+                    continue
+                _er, _en = SS.load_emag_reports([_rp])
+                if not _er:
+                    continue
+                _st = SS.fix_emag_sheet(wb[sn], _er, dry=dry)
+                if _st.get("ok"):
+                    if _st["fixed"]:
+                        print(f"    [回写] {sn}: {_st['fixed']} 行滞后取消 → 状态改为报告终态"
+                              f"（{_st['qty']:.0f} 件停止计销）例={_st['samples'][:2]}")
+                    else:
+                        print(f"    [回写] {sn}: 取消单状态无需校正（报告 {_en} 份 / {len(_er)} 单）")
+        except Exception as e:
+            print(f"    [回写] !! 失败（不影响跑批；月末封存前 status_sync 仍会兜底）：{e!r}")
     # 锚点滚动（"组合跟着更新"）：模拟透视件的下载日期格 → 快照日
     # 仅在该簿**全部**库存报告都入库时滚动；有缺失就不动（锚点=下载日期，
     # 部分 sheet 只有旧数据时把共享日期滚到新快照日 = 虚报库存新鲜度）。
@@ -2396,6 +2628,13 @@ def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="20
 
     # ---- 本簿异常汇总（供 main() 汇总与退出码判定）----
     hard, soft = [], []
+    # 标了 optional 的 sheet（新站点报告还没下载）：缺报告只记 soft，不拉退出码
+    _opt_items = list(wb_cfg.get("stocks") or [])
+    _s2 = wb_cfg.get("sales")
+    if _s2:
+        _opt_items += _s2 if isinstance(_s2, list) else [_s2]
+    opt_sheets = {str(it.get("sheet")).strip() for it in _opt_items
+                  if (it or {}).get("optional")}
     for st in sales_stats:
         if st.get("mislabel"):
             hard.append(f"销售报告整份错位已拒收: {st['report']} → {st['sheet']}"
@@ -2405,9 +2644,11 @@ def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="20
         elif st.get("total") and not st.get("appended"):
             soft.append(f"{st['sheet']}: 报告 {st['total']} 行全部去重（无新增）")
     for sn in sales_missing:
-        hard.append(f"销售报告缺失，当日不更新: {sn}")
+        (soft if str(sn).strip() in opt_sheets
+         else hard).append(f"销售报告缺失，当日不更新: {sn}")
     for sn in stock_skipped:
-        hard.append(f"库存报告缺/空，当日不更新: {sn}")
+        (soft if str(sn).strip() in opt_sheets
+         else hard).append(f"库存报告缺/空，当日不更新: {sn}")
     for sn in stock_sheet_missing:
         hard.append(f"库存 sheet 不存在（config 与工作簿不符），当日不更新: {sn}")
     if hard or soft:
@@ -2420,7 +2661,7 @@ def process(wb_cfg, dry=False, snap_dir=None, snap_day="20261006", snap_date="20
     return dict(file=f, hard=hard, soft=soft)
 
 
-def _run_one(wb_cfg, dry, snap_dir, snap_day, snap_date, work_dir=None):
+def _run_one(wb_cfg, dry, snap_dir, snap_day, snap_date, work_dir=None, status_fix=True):
     """并行调度单元：把子进程 stdout 原样带回主进程打印；异常不炸整批（与串行容错一致）。
     work_dir 仅供测试沙箱覆盖（bench_run.py 用），生产不传。
     返回 (簿名, 输出文本, 异常dict) —— 异常dict 供 main() 做「今日异常汇总」与退出码。"""
@@ -2432,7 +2673,8 @@ def _run_one(wb_cfg, dry, snap_dir, snap_day, snap_date, work_dir=None):
     try:
         with contextlib.redirect_stdout(buf):
             iss = process(wb_cfg, dry=dry, snap_dir=snap_dir,
-                          snap_day=snap_day, snap_date=snap_date) or iss
+                          snap_day=snap_day, snap_date=snap_date,
+                          status_fix=status_fix) or iss
     except Exception as e:
         print(f"    [ERROR] {wb_cfg['file']}: {e!r}", file=buf)
         traceback.print_exc(file=buf)
@@ -2449,6 +2691,9 @@ def main():
     ap.add_argument("--jobs", type=int, default=3,
                     help="并行处理的工作簿数。openpyxl 解析是 CPU 密集型，用多进程；默认 3。"
                          "内存紧张或只想看顺序日志可设 1")
+    ap.add_argument("--no-status-fix", action="store_true",
+                    help="跳过日常取消单回写（2026-11-04 默认开：append_sales 后用当天报告"
+                         "终态把 Cancelled 回写进明细状态+qty，日销列自动回落）")
     args = ap.parse_args()
     if args.snap:
         snap_dir = os.path.normpath(args.snap)
@@ -2464,17 +2709,20 @@ def main():
             if not args.only or any(k in c["file"] for k in args.only.split(","))]
     jobs = max(1, args.jobs)
     work_dir = os.environ.get("DSR_WORK_DIR") or None
+    status_fix = not args.no_status_fix
     results = []
     if jobs == 1 or len(cfgs) <= 1:
         for wb_cfg in cfgs:
-            _f, out, iss = _run_one(wb_cfg, args.dry_run, snap_dir, snap_day, snap_date, work_dir)
+            _f, out, iss = _run_one(wb_cfg, args.dry_run, snap_dir, snap_day, snap_date,
+                                    work_dir, status_fix)
             print(out, end="")
             results.append(iss)
     else:
         from concurrent.futures import ProcessPoolExecutor
         from functools import partial
         fn = partial(_run_one, dry=args.dry_run, snap_dir=snap_dir,
-                     snap_day=snap_day, snap_date=snap_date, work_dir=work_dir)
+                     snap_day=snap_day, snap_date=snap_date, work_dir=work_dir,
+                     status_fix=status_fix)
         print(f"===== 并行度: {jobs}（{len(cfgs)} 本簿，多进程） =====")
         with ProcessPoolExecutor(max_workers=jobs) as ex:
             for _f, out, iss in ex.map(fn, cfgs):

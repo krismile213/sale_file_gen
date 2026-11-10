@@ -40,6 +40,14 @@
     默认不跑：它要扫 13 本簿 27 张表的月度块（8000+ SKU），比缺货表/断货明细慢不少。
     同样「失败只提示、不影响跑批与归档」。
 
+取消单回写（2026-11-04 新增，**默认开启**）：
+    append_sales 只灌新单、不回写状态——订单取消后明细仍是 Pending/qty=1，日销虚高
+    且永不回退（10月实测虚高 517 件）。现在跑批在灌单后用**当天报告终态**把
+    Cancelled 回写进明细（状态+quantity 两列，不增删行、不动公式），跑批日志看
+    「[回写]」行；日销列 SUMIFS 活公式自动回落。月列冻结仍只在换月封存时做。
+    回写失败不影响跑批（月末封存前 status_sync 还有全量兜底）。
+    --no-status-fix       关闭回写（复现旧行为对比时用）
+
 体检相关：
     --check-only          只做跑前体检，不跑
     --no-check            跳过体检直接跑
@@ -63,7 +71,8 @@ _CORE = os.path.join(_HERE, "core")
 
 _FLAGS = ("--no-check", "--check-only", "--force", "--no-archive",
           "--archive-only", "--force-archive", "--no-shortage", "--no-stockout",
-          "--trend", "--keep-unsold", "--no-history", "--legacy-dos")
+          "--trend", "--keep-unsold", "--no-history", "--legacy-dos",
+          "--no-status-fix")
 
 
 def _resolve_day(runner_args):
@@ -314,6 +323,7 @@ def main():
     no_shortage = "--no-shortage" in argv
     no_stockout = "--no-stockout" in argv
     trend = "--trend" in argv                # 趋势月报默认关，显式 --trend 才跑
+    no_status_fix = "--no-status-fix" in argv    # 取消单回写默认开，显式才关
     runner_args = [a for a in argv if a not in _FLAGS]
 
     if archive_only:                      # 只归档：不体检、不跑批
@@ -353,6 +363,8 @@ def main():
     if not os.path.exists(runner):
         raise SystemExit(f"找不到入口 {runner}")
     cmd = [sys.executable, runner] + runner_args
+    if no_status_fix:
+        cmd.append("--no-status-fix")
     rc = subprocess.call(cmd, cwd=_DSR)
     if rc == 0:
         if not no_shortage and not dry_run:

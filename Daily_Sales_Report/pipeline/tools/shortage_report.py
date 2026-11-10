@@ -39,6 +39,7 @@ for _p in (_CORE, _HERE):
 
 import config as C                                        # noqa: E402
 import stockout_report as S                               # noqa: E402
+import product_master as PM                               # noqa: E402  商品资料主数据
 from openpyxl import Workbook, load_workbook              # noqa: E402
 from openpyxl.styles import Font, PatternFill, Alignment  # noqa: E402
 from openpyxl.utils import get_column_letter              # noqa: E402
@@ -332,6 +333,35 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
 
     cur_m = int(str(snap_day)[4:6]) or 10          # 快照月份，用于取上月/近3月
 
+    # ---- 统一日历口径（2026-11-07 用户要求）----
+    # 原实现固定 ÷30 / ÷90，跨月天数不等（31/28 天）就会系统性偏差：
+    #   10 月 31 天却 ÷30 → 上月日均虚高 3.3%；2 月 28 天却 ÷30 → 虚低 6.7%。
+    # 而日销表 AE 列「上月日均」是用 ROUND(封存列/当月日历天数,2) 算的，
+    # 断货分析用 ÷30 就跟日销表对不上。这里统一改成按真实日历天数。
+    def _month_days(y, m):
+        """某年某月的日历天数"""
+        if m == 12:
+            nxt = date(y + 1, 1, 1)
+        else:
+            nxt = date(y, m + 1, 1)
+        return (nxt - date(y, m, 1)).days
+
+    def _shift_month(y, m, back):
+        """往回推 back 个月 → (年, 月)"""
+        for _ in range(back):
+            if m == 1:
+                y, m = y - 1, 12
+            else:
+                m -= 1
+        return y, m
+
+    _py, _pm = _shift_month(snap_dt.year, snap_dt.month, 1)     # 上月
+    _py2, _pm2 = _shift_month(snap_dt.year, snap_dt.month, 2)   # 上上月
+    _py3, _pm3 = _shift_month(snap_dt.year, snap_dt.month, 3)   # 上上上月
+    DAYS_PREV = _month_days(_py, _pm)                          # 上月天数（31/30/28/29）
+    DAYS_M3 = _month_days(_py2, _pm2) + _month_days(_py3, _pm3) + DAYS_PREV  # 近3月总天数
+    DAYS_Q30 = 30                                              # 近30天是固定窗，不变
+
     def _key(r):
         return (r["site"], r["acct"], _norm_sku(r["sku"]))
 
@@ -377,6 +407,13 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
         return prev, m3, ytd
 
     items = []
+    # 商品资料（2026-11-07 接入）：类型/状态/销量评级/品牌/供应商/镜头膜。
+    # 采购最关心两件事 —— 这是壳还是膜、这个 SKU 是不是已经停售了；
+    # 另外按用户给的评级规则，E / XE「不要采购」，遇到就直接压掉建议数量。
+    pm = PM.load()
+    # 商品资料覆盖统计：查不到属性的 SKU 会在「类型/商品状态/销量评级」三列留空，
+    # 采购看到空白会以为是数据没算出来。这里累计下来，最后在 meta 里报警。
+    _pm_miss = {}
     for r in rows:
         plan = plan_of(r["site"], r["acct"], m)
         key = _key(r)
@@ -385,7 +422,7 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
         # 日均先按 3 位小数定值，可售天数再用**这个定值**去除 —— 与日销表
         # 「ROUND(日均,1) 后再算 (F+E)/T」的做法一致，保证表里看到的数能对上。
         d_mtd = round(_daily_mtd(r), 3)
-        d_prev = round(m_prev / 30.0, 3) if m_prev is not None else None
+        d_prev = round(m_prev / DAYS_PREV, 3) if m_prev is not None else None   # 日历天数
         if d_mtd > 0:
             dos_v = ((r.get("avail") or 0) + (r.get("reserved") or 0)) / d_mtd
         else:
@@ -397,6 +434,10 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
         if not g:
             continue
         dos = r.get("dos")
+        # 归并注记（2026-11-03）：库存报告的 amzn.gr.* 别名行已并入本行，可售/在途
+        # 是成员行之和 —— 不注明的话，采购对不上原始报告里「裸 SKU 那一行」的数。
+        if r.get("aliases"):
+            why += f"（并 {len(r['aliases'])-1} 个 amzn.gr.* 别名行：{r['aliases'][1]} 等，库存已求和）"
         unsold = bool(
             classify_unsold and g == "三级" and (r.get("inbound") or 0) <= 0
             and key not in sold
@@ -408,7 +449,7 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
 
         # ---------------- 采购建议（2026-11-03 用户需求：新增「采购建议」sheet） ----------------
         # 目标覆盖天数 = 计划备货天数，与「计划备货天数 / 缺口天数」两列同源。
-        # 日均回退链：本月实时速度 → 上月日均 → 近3月÷90 → 近30天÷30。
+        # 日均回退链：本月实时速度 → 上月日均 → 近3月÷日历天数 → 近30天÷30。
         # ⚠️ 回退链不能省：二级/三级的 SKU 这个月本来就没货可卖，本月日均经常是 0，
         #    直接按 0 算会得出「建议补货 0 件」—— 把最该补的断货行整行漏掉。
         if d_mtd > 0:
@@ -416,9 +457,9 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
         elif d_prev is not None and d_prev > 0:
             by_daily, by_src = d_prev, "上月日均"
         elif m3:
-            by_daily, by_src = round(m3 / 90.0, 3), "近3月÷90"
+            by_daily, by_src = round(m3 / DAYS_M3, 3), f"近3月÷{DAYS_M3}"
         elif (r.get("q30") or 0) > 0:
-            by_daily, by_src = round(r["q30"] / 30.0, 3), "近30天÷30"
+            by_daily, by_src = round(r["q30"] / DAYS_Q30, 3), "近30天÷30"
         else:
             by_daily, by_src = 0.0, "无销量"
 
@@ -432,19 +473,39 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
         if moq > 1 and buy > 0:
             buy = int(math.ceil(buy / moq) * moq)
 
+        # 采购动作：纯枚举值（立刻补 / 在途不够 / 下周三排），供采购在 Excel 里直接筛选。
+        # 原来是一整串文字（「补货 156 件（在途不足）」），筛选只能按文本匹配，很不顺手。
+        # 2026-11-03 按用户要求拆成「采购动作」+「建议数量」两列。
         if buy <= 0:
-            advice = ("无需补货：在途已覆盖目标库存" if (r.get("inbound") or 0) > 0
-                      else "无需补货")
-            buy_when = "—"
+            action = "—"
         elif g == "三级":
-            advice, buy_when = f"立即补货 {buy} 件", "立即（已无货可卖）"
+            action = "立即补货"
         elif g == "二级":
-            advice, buy_when = f"补货 {buy} 件（在途不足）", "下周三前"
+            action = "在途不足"
         else:
-            advice = f"排入下周三补货 {buy} 件（按计划备货 {tgt_days} 天）"
-            buy_when = "下周三"
-        if moq > 1 and buy > 0:
-            advice += f"（按 {moq} 件/箱取整）"
+            action = "排入下周三"
+
+        # ---------------- 商品资料属性（2026-11-07） ----------------
+        # 三条硬规则直接压采购建议，避免采购照着表去下不该下的单：
+        #   ①状态=停售/不销售 → 不补（钢化膜/水凝膜连续 12 个月 E 级、平板膜一年<250 套的
+        #     已经被运营标停售，再补就是压库存）
+        #   ②销量评级 E / XE → 不补（用户写在 商品资料!A1：「评级为E或者XE,不要采购」）
+        #   ③手机壳不参与评级（用户原文「手机壳产品不参与以上产品评级规则！」）：
+        #     product_master.should_buy() 对手机壳直接返回 None，不走 E/XE 压制。
+        #     实测 26 个手机壳里有 18 个挂着 E/XE —— 不豁免的话它们会被整批误杀。
+        _pa = PM.attrs(r["sku"], pm) or {}
+        ptype, pstatus, pscore = _pa.get("type"), _pa.get("status"), _pa.get("score")
+        if not _pa:
+            _pm_miss.setdefault(str(r["sku"]), []).append(f'{r["site"]}/{r["acct"]}')
+        buy_blk = None
+        if buy > 0:
+            if str(pstatus or "") in ("停售", "不销售"):
+                buy_blk = f"停售（{pstatus}），不给采购建议"
+            elif PM.should_buy(r["sku"], pm) is False:
+                buy_blk = f"评级 {pscore}，按规则不采购"
+        if buy_blk:
+            buy, action, dos_in = 0, "—", dos_in
+            why = f"{why}｜{buy_blk}"
 
         # 优先级与断货明细同源：严重断货=三级、一般断货=二级、预备断货=一级
         q30v = r.get("q30") or 0
@@ -475,20 +536,44 @@ def collect(snap_dir, snap_day, lead=7, classify_unsold=True, with_history=True,
             # 采购建议
             by_daily=by_daily, by_src=by_src, tgt_days=tgt_days,
             target=target, buy=buy, dos_in=dos_in,
-            buy_when=buy_when, advice=advice, prio=prio,
+            action=action, prio=prio,
+            tier=_tier_of(buy),
+            # 商品资料属性（2026-11-07）：壳/膜、是否停售、销量评级、品牌、供应商、
+            # 镜头膜标记（镜头膜属于配件，采购/运营分线不同，单独一列便于筛）
+            ptype=ptype, pstatus=pstatus, pscore=pscore,
+            pauto=bool(PM.is_stop_sale(r["sku"], pm)),
+            pbrand=_pa.get("brand"), pvendor=_pa.get("vendor"),
+            plens=_pa.get("lens"),
+            buy_blk=buy_blk,
+            # 库龄（2026-11-03 加，源=库龄总表，随月销表更新）：age = 七档 dict；
+            # stale = 超90天呆滞件数（亚马逊/interflow/eMAG = 91天以上各档之和，
+            # 美客多 = Resumen「陈旧库存」，该账号没有分档）
+            age=r.get("tiers"), stale=(r.get("stale") or 0),
         ))
+    _age_p, _age_per = S.age_xlsx_info()
     meta = dict(plan=m, missing=missing, warn=warn, snap_dt=snap_dt,
                 total=len(rows), sales_only=sales_only, cur_m=cur_m,
                 with_history=with_history, elapsed=elapsed, oos_rows=len(oos),
                 classified=classify_unsold, degraded=degraded, moq=moq,
-                lead=lead)
+                lead=lead,
+                age_xlsx=(os.path.basename(_age_p) if _age_p else None),
+                age_per=_age_per,
+                # 日历口径（2026-11-07）：把三个分母带出去，供说明文案引用。
+                # DAYS_PREV / DAYS_M3 是 build() 内的局部变量，_advice_sheet()
+                # 在另一个函数里拿不到 —— 必须走 meta 传参（曾因此 NameError）。
+                days_prev=DAYS_PREV, days_m3=DAYS_M3, days_q30=DAYS_Q30,
+                # 商品资料覆盖（2026-11-07）：{SKU: [站点/账号, ...]}，供报表脚注与告警
+                pm_path=PM.find_path(), pm_total=len(pm), pm_miss=_pm_miss)
     return items, meta
 
 
 # ---------------- 输出 ----------------
 _LEVEL_ORDER = {"一级": 0, "二级": 1, "三级": 2}
 _COLS = [("level", "缺货等级"), ("site", "站点"), ("acct", "账号"), ("sku", "SKU"),
-         ("name", "品名"), ("avail", "可售库存"), ("reserved", "预留"),
+         ("name", "品名"),
+         # 商品资料（2026-11-07）：采购第一眼要看清这是壳还是膜、这个 SKU 还卖不卖
+         ("ptype", "类型"), ("pstatus", "商品状态"), ("pscore", "销量评级"),
+         ("avail", "可售库存"), ("reserved", "预留"),
          ("inbound", "在途"),
          ("q7", "近7天"), ("q30", "近30天"),
          ("m_prev", "上月销量"), ("m3", "近3月销量"), ("m_ytd", "今年累计"),
@@ -502,11 +587,16 @@ _COLS = [("level", "缺货等级"), ("site", "站点"), ("acct", "账号"), ("sk
 _HIST_COLS = ("m_prev", "m3", "m_ytd")
 
 # 采购建议 sheet 的列（2026-11-03 新增）。比明细 sheet 少「判定依据」、「数据源」，
-# 多「计算日均 / 日均来源 / 目标库存量 / 建议补货量 / 建议时机 / 采购建议」——
+# 多「计算日均 / 日均来源 / 目标库存量 / 采购动作 / 建议数量」——
 # 采购只看这一张就能下单，不用回头对照别的 sheet。
 _ADV_COLS = [
     ("prio", "优先级"), ("level", "缺货等级"), ("site", "站点"), ("acct", "账号"),
     ("sku", "SKU"), ("name", "品名"),
+    # 商品资料（2026-11-07）：类型（钢化膜/水凝膜/手机壳…）、商品状态（在售/停售）、
+    # 销量评级（A~E / XA~XE）。评级 E、XE 与停售 SKU 的建议数量已被压成 0，
+    # 原因写在「停购原因」列，采购一眼能看出为什么这行不用下单。
+    ("ptype", "类型"), ("pstatus", "商品状态"), ("pscore", "销量评级"),
+    ("pbrand", "品牌"), ("pvendor", "供应商"),
     ("avail", "可售库存"), ("reserved", "预留"), ("inbound", "在途"),
     ("q7", "近7天"), ("q30", "近30天"), ("m3", "近3月销量"), ("m_ytd", "今年累计"),
     ("by_daily", "计算日均"), ("by_src", "日均来源"),
@@ -515,9 +605,38 @@ _ADV_COLS = [
     # 采购看不懂的组合。改用「含在途可撑天数」—— 与建议补货量同一分母，逐行可自校验：
     #   含在途可撑天数 < 计划备货天数  ⇔  建议补货量 > 0
     ("dos_in", "含在途可撑天数"), ("plan", "计划备货天数"),
-    ("target", "目标库存量"), ("buy", "建议补货量"), ("buy_when", "建议时机"),
-    ("advice", "采购建议"),
+    ("target", "目标库存量"),
+    # 动作在前、数量紧跟其后：筛「采购动作」时数量就在旁边，一眼看到要下多少。
+    ("action", "采购动作"), ("buy", "建议数量"),
+    # 梯队（2026-11-03 用户要求「按建议数量梯队排」）：
+    # 数量从大到小编号，同梯队里的第几单写在「梯队内序号」，采购可按梯队分批下单。
+    ("tier", "数量梯队"), ("tier_seq", "梯队内序号"),
+    # 库龄七档 + 呆滞（2026-11-03 用户要求把断货明细的库龄统计也加进来）。
+    # 源 =《亚马逊EMAG库龄情况总表》（trunk/data/库龄报表/，随月销表更新），
+    # 按（账号, 站点, SKU）精确挂；美客多行没有分档（七档整行留空），
+    # 呆滞取 Resumen「陈旧库存」。第 7 档在总表里标「366+」，这里沿用断货明细的「365+」。
+    ("a0", "0-30"), ("a1", "31-60"), ("a2", "61-90"), ("a3", "91-180"),
+    ("a4", "181-270"), ("a5", "271-365"), ("a6", "365+"), ("stale", "呆滞>90天"),
+    ("buy_blk", "停购原因"),
 ]
+
+# 七档库龄的 key（总表缺失时这七列整体不出，呆滞列保留——美客多仍有数）
+_AGE_TIER_KEYS = ("a0", "a1", "a2", "a3", "a4", "a5", "a6")
+
+# 数量梯队的边界（件）。切法依据 20261103 真实分布，不是拍脑袋的等分：
+#   ≥200 → 31 个 SKU，却占 76.5% 的件数（这几个是真正的大单，要单独走采购流程）
+#   51~199 → 19 个；11~50 → 78 个；≤10 → 241 个（碎单，采购一般攒几批一起下）
+# 想改档位只改这里，排序、序号、表尾汇总会一起跟着变。
+_TIER_BOUNDS = (("T1 大单", 200), ("T2 中单", 51), ("T3 小单", 11))
+_TIER_NAMES = [t[0] for t in _TIER_BOUNDS] + ["T4 碎单"]
+_TIER_ORDER = {n: i for i, n in enumerate(_TIER_NAMES)}
+
+
+def _tier_of(buy):
+    for name, lo in _TIER_BOUNDS:
+        if buy >= lo:
+            return name
+    return "T4 碎单"
 
 _PRIO_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "—": 9}
 
@@ -555,37 +674,73 @@ def _sheet(ws, title, items, cols=None):
 
 
 def _advice_sheet(wb, adv, meta, live_n):
-    """「采购建议」sheet（2026-11-03 用户需求）—— 只列建议补货量 > 0 的行，按优先级排序。
+    """「采购建议」sheet（2026-11-03 用户需求）—— 只列建议补货量 > 0 的行。
 
-    与断货明细的「采购建议」sheet 同一套算法（建议量 = ceil(日均×目标天数) − 可售 − 在途），
-    区别是本表没有库龄数据，因此不带 0-30/31-60/…分档列和「呆滞>90天」列。
+    2026-11-03 二次调整：主序改成「数量梯队」（T1 大单 → T4 碎单），
+    梯队内按建议数量降序编号，方便采购分批下单。
+    2026-11-03 三次调整：尾部追加库龄七档 + 「呆滞>90天」（与断货明细的采购建议
+    sheet 对齐），源 =《亚马逊EMAG库龄情况总表》（随月销表更新）；总表缺失时
+    七档整组不出、只留呆滞列。
     """
     cols = _ADV_COLS
     if not any(it.get("m3") is not None for it in adv):
         cols = [c for c in _ADV_COLS if c[0] not in _HIST_COLS]
+    if not any(it.get("age") for it in adv):
+        cols = [c for c in cols if c[0] not in _AGE_TIER_KEYS]
     ws = wb.create_sheet("采购建议")
     moq = meta.get("moq") or 0
-    note = (f"建议补货量 = ceil(计算日均 × 计划备货天数) − 可售库存 − 在途"
+    _dm3 = meta.get("days_m3") or 90        # 近3月日历天数（实际 89~92，随月份变）
+    _dq30 = meta.get("days_q30") or 30      # 近30天固定窗
+    tier_txt = "；".join(
+        f"{n} = ≥{lo} 件" if i == 0 else
+        f"{n} = {_TIER_BOUNDS[i][1]}~{_TIER_BOUNDS[i - 1][1] - 1} 件"
+        for i, (n, lo) in enumerate(_TIER_BOUNDS)
+    ) + f"；T4 碎单 = ≤{_TIER_BOUNDS[-1][1] - 1} 件"
+    note = (f"建议数量 = ceil(计算日均 × 计划备货天数) − 可售库存 − 在途"
             f"（预留已锁定给既有订单，不计入可售）。"
-            f"「含在途可撑天数」＜「计划备货天数」⇔ 建议补货量＞0，可逐行自校验。"
-            f"日均回退链：本月日均(实时速度) → 上月日均 → 近3月÷90 → 近30天÷30"
+            f"「含在途可撑天数」＜「计划备货天数」⇔ 建议数量＞0，可逐行自校验。"
+            f"日均回退链：本月日均(实时速度) → 上月日均 → 近3月÷{_dm3} → 近30天÷{_dq30}"
             f"（断货 SKU 本月常常没货可卖，不回退会把建议量算成 0）。"
+            f"【采购动作】立即补货 = 三级（库存在途皆 0，已无货可卖）；"
+            f"在途不足 = 二级（有在途但撑不到计划天数，建议下周三前到）；"
+            f"排入下周三 = 一级（还能撑几天，按节奏排单）。"
+            f"【数量梯队】{tier_txt}，整表按梯队从大到小排，「梯队内序号」= 该档第几单。"
             f"只列建议量 > 0 的 {len(adv)} 个 / 缺货 {live_n} 个；"
             f"未列入 = 在途已覆盖目标库存或无需补货。"
-            + (f"建议量已按 {moq} 件/箱向上取整。" if moq > 1 else ""))
+            + (f"建议量已按 {moq} 件/箱向上取整。" if moq > 1 else "")
+            + (f"【库龄】七档来源《{meta.get('age_xlsx')}"
+               + (f"》（期数 {meta.get('age_per')}，随月销表更新，与当日快照可能有 1~2 天时点差）"
+                  if meta.get("age_per") else "》")
+               + f"；「呆滞>90天」= 91 天以上各档之和，美客多行取 Resumen「陈旧库存」"
+                 f"（该账号无分档）；呆滞大的 SKU 建议先清库再补货。"
+               if any(it.get("age") for it in adv) else
+               f"【呆滞>90天】美客多取 Resumen「陈旧库存」，其余账号本次无库龄数据。")
+            # 商品资料（2026-11-07）：说明三列从哪来、以及两条压制规则
+            + (f"【商品资料】类型/商品状态/销量评级/品牌/供应商取自《{os.path.basename(meta['pm_path'])}》，"
+               f"共 {meta.get('pm_total')} 个 SKU。两条规则已作用到「建议数量」上："
+               f"①状态=停售/不销售 → 不补；②膜类评级 E/XE → 不补（手机壳不参与评级，照常补）。"
+               f"被压掉的行「采购动作」显示「—」、原因写在「停购原因」列。"
+               if meta.get("pm_path") else
+               "【商品资料】未找到 商品资料.xlsx，类型/商品状态/销量评级三列为空，"
+               "且停售/评级 E-XE 的压制规则本次未生效。"))
     ws.cell(row=1, column=1, value=note).font = Font(italic=True, size=9, color="666666")
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cols))
     for j, (_k, label) in enumerate(cols, start=1):
         c = ws.cell(row=2, column=j, value=label)
         c.fill, c.font = _HDR_FILL, _HDR_FONT
         c.alignment = Alignment(horizontal="center", vertical="center")
-        ws.column_dimensions[get_column_letter(j)].width = {
-            "name": 40, "advice": 32, "buy_when": 18, "sku": 12, "site": 10,
-            "by_src": 11,
-        }.get(_k, len(label) * 2 + 2)
+        ws.column_dimensions[get_column_letter(j)].width = ({
+            "name": 40, "action": 14, "sku": 12, "site": 10,
+            "by_src": 11, "buy": 11, "tier": 12, "tier_seq": 11,
+        }.get(_k) or (8 if _k in _AGE_TIER_KEYS or _k == "stale"
+                      else len(label) * 2 + 2))
     for i, it in enumerate(adv, start=3):
         for j, (k, _l) in enumerate(cols, start=1):
-            v = it.get(k)
+            if k in _AGE_TIER_KEYS:
+                # 七档不在 item 上平铺，从「age」dict 按档名取（档名 = 断货明细口径）
+                v = (it.get("age") or {}).get(S.AGE_TIER_LABEL[int(k[1:])])
+            else:
+                v = it.get(k)
             if isinstance(v, float):
                 if k == "dos_in":
                     v = round(v, 1)                # 天数：1 位
@@ -601,9 +756,34 @@ def _advice_sheet(wb, adv, meta, live_n):
     tot = ws.cell(row=r, column=1, value="合计")
     tot.font = Font(bold=True, size=9)
     ws.cell(row=r, column=6, value=f"{len(adv)} 个 SKU").font = Font(bold=True, size=9)
-    # 「建议补货量」是倒数第二列（最后一列是「采购建议」文字）
-    ws.cell(row=r, column=len(cols) - 2,
-            value=sum(it.get("buy") or 0 for it in adv)).font = Font(bold=True, size=9)
+    # 按 key 定位「建议数量」列，别再用列数倒推（2026-11-03 拆列时踩过一次）
+    buy_col = [k for k, _ in cols].index("buy") + 1
+    grand = sum(it.get("buy") or 0 for it in adv)
+    ws.cell(row=r, column=buy_col, value=grand).font = Font(bold=True, size=9)
+
+    # 表尾：按数量梯队汇总（采购一眼看出哪一档吃掉了多少量）
+    # 放在筛选范围之外，筛的时候不会混进汇总行
+    rt = r + 2
+    ws.cell(row=rt, column=1, value="按数量梯队汇总").font = Font(bold=True, size=10)
+    for j, h in enumerate(("数量梯队", "SKU 数", "合计件数", "件数占比"), start=1):
+        c = ws.cell(row=rt + 1, column=j, value=h)
+        c.fill, c.font = _HDR_FILL, _HDR_FONT
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for i, t in enumerate(_TIER_NAMES):
+        g = [it for it in adv if it.get("tier") == t]
+        q = sum(it.get("buy") or 0 for it in g)
+        row = rt + 2 + i
+        ws.cell(row=row, column=1, value=t).font = Font(bold=True, size=9)
+        ws.cell(row=row, column=2, value=len(g)).font = Font(size=9)
+        ws.cell(row=row, column=3, value=q).font = Font(size=9)
+        pc = ws.cell(row=row, column=4, value=(q / grand if grand else 0))
+        pc.number_format, pc.font = "0.0%", Font(size=9)
+    row = rt + 2 + len(_TIER_NAMES)
+    ws.cell(row=row, column=1, value="合计").font = Font(bold=True, size=9)
+    ws.cell(row=row, column=2, value=len(adv)).font = Font(bold=True, size=9)
+    ws.cell(row=row, column=3, value=grand).font = Font(bold=True, size=9)
+    ws.cell(row=row, column=4, value=1 if grand else 0).number_format = "0.0%"
+    ws.cell(row=row, column=4).font = Font(bold=True, size=9)
     ws.freeze_panes = "A3"
     ws.auto_filter.ref = f"A2:{get_column_letter(len(cols))}{max(len(adv) + 2, 3)}"
     return ws
@@ -616,9 +796,10 @@ def _hist_tip(meta, snap_day):
     cm = meta.get("cur_m") or int(str(snap_day)[4:6])
     prev = "%d月" % (cm - 1) if cm >= 2 else "去年12月"
     m3 = "%d~%d月" % (max(1, cm - 2), cm)
+    dp = meta.get("days_prev") or 30
     return (f"（销量列：上月={prev}　近3月={m3}　今年累计=1~{cm}月，源=日销表月度块；"
             f"本月日均=实时速度=当月累计÷(已过{meta.get('elapsed', '')}天−当月缺货天数)，"
-            f"上月日均=上月销量÷30；可售天数=(可售+预留)÷本月日均）")
+            f"上月日均=上月销量÷{dp}（{prev}日历天数）；可售天数=(可售+预留)÷本月日均）")
 
 
 def write(items, meta, out_dir, snap_day):
@@ -692,8 +873,15 @@ def write(items, meta, out_dir, snap_day):
 
     # 采购建议（2026-11-03）：只收 live，未起量今年零销量、建议量必为 0，本就不该补货
     adv = [it for it in live if (it.get("buy") or 0) > 0]
-    adv.sort(key=lambda x: (_PRIO_ORDER.get(x.get("prio"), 9),
-                            -x["buy"], -(x.get("q30") or 0)))
+    # 主序 = 数量梯队（用户 2026-11-03 要求「按建议数量梯队排」），
+    # 梯队内再按建议数量降序、优先级、近30天销量兜底。
+    adv.sort(key=lambda x: (_TIER_ORDER.get(x.get("tier"), 9), -x["buy"],
+                            _PRIO_ORDER.get(x.get("prio"), 9),
+                            -(x.get("q30") or 0)))
+    # 梯队内序号：采购按「T1 第 1 单、第 2 单…」分批下单，序号随排序走不会跳号
+    for t in _TIER_NAMES:
+        for seq, it in enumerate((x for x in adv if x.get("tier") == t), 1):
+            it["tier_seq"] = seq
     _advice_sheet(wb, adv, meta, len(live))
 
     if unsold:
@@ -760,8 +948,21 @@ def main(argv=None):
               f"P2 {by_prio.get('P2', 0)} / P3 {by_prio.get('P3', 0)}")
     if meta["missing"]:
         print(f"[!] 缺报告 {len(meta['missing'])} 份：" + "；".join(meta["missing"][:4]))
-    for w in meta["warn"][:5]:
+    _merge = [w for w in meta["warn"] if w.startswith("[归并]")]
+    _anom = [w for w in meta["warn"] if not w.startswith("[归并]")]
+    for w in _anom[:5]:
         print(f"[!] {w}")
+    for w in _merge[:5]:
+        print(w)        # 归并是正常动作，不带 [!] 异常标记
+    # 商品资料覆盖（2026-11-07）：缺资料的 SKU 在「类型/商品状态/销量评级」是空白，
+    # 采购容易误以为程序漏算。默认不打断流程，只提示去补录。
+    _pmm = meta.get("pm_miss") or {}
+    if not meta.get("pm_path"):
+        print("[!] 未找到 商品资料.xlsx —— 类型/商品状态/销量评级 三列将为空，"
+              "且「评级E/XE不采购」「停售不补」两条规则不会生效")
+    elif _pmm:
+        print(f"[!] 商品资料未收录 {len(_pmm)} 个 SKU（三列留空、不参与停售/评级压制）："
+              + "、".join(list(_pmm)[:8]) + ("…" if len(_pmm) > 8 else ""))
     print(f"已输出: {out}")
     return 0
 

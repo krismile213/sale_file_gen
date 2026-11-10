@@ -400,7 +400,8 @@ def collect(snap_dir, day):
             path = _resolve(snap_dir, day, cands)
             nm = os.path.basename(path) if path else None
             label = nm or " / ".join(os.path.basename(_fmt(x, day)) for x in cands)
-            rows.append(dict(book=wb["file"], sheet=it["sheet"], name=label, path=path))
+            rows.append(dict(book=wb["file"], sheet=it["sheet"], name=label, path=path,
+                             optional=bool(it.get("optional"))))
     return rows
 
 
@@ -411,7 +412,8 @@ def check(day=None, snap_dir=None):
     if snap_dir is None:
         snap_dir = os.path.join(C.SNAP_BASE, C.CURRENT_PERIOD, "快照日期", day)
 
-    res = dict(day=day, snap_dir=snap_dir, rows=[], missing=[], bad=[], locked=[],
+    res = dict(day=day, snap_dir=snap_dir, rows=[], missing=[], missing_optional=[],
+               bad=[], locked=[],
                prev=None, prev_period=None, same=[], changed=[], added=[], gone=[],
                dup_groups=[], ship=dict(tsv=0, tickets=0, dups=[]))
 
@@ -419,11 +421,14 @@ def check(day=None, snap_dir=None):
     rows = collect(snap_dir, day)
     res["rows"] = rows
     for r in rows:
+        if r["path"] is None:
+            # optional：新接入站点（如 2026-11-06 的 Interflowd英国）报告还没下载，
+            # 只告警、不算硬伤 —— 否则整批 exit 2 跑不动。runner 那边缺报告会自动跳过该 sheet。
+            (res["missing_optional"] if r.get("optional") else res["missing"]).append(r)
+            continue
         ok, note = _probe(r["path"])
         r["note"] = note
-        if r["path"] is None:
-            res["missing"].append(r)
-        elif ok is False:
+        if ok is False:
             res["bad"].append((r, note))
 
     # ---- 工作簿占用（WPS/Excel 开着 → 跑时该簿会被整份跳过、少算数）----
@@ -577,9 +582,13 @@ def render(res, quiet=False):
     n_req = len(res["rows"])
     a(f"① 导完整：共需 {n_req} 份报告")
     if not res["missing"] and not res["bad"]:
-        a("   ✅ 齐全，格式正常")
+        _no = len(res.get("missing_optional") or [])
+        a("   ✅ 齐全，格式正常" + (f"（另有 {_no} 份「可缺」报告未下载，对应 sheet 今日不更新）"
+                                    if _no else ""))
     for r in res["missing"]:
         a(f"   ✗ 缺  [{r['book']}] {r['sheet']}  <- {r['name']}")
+    for r in res.get("missing_optional") or []:
+        a(f"   ⚠ 缺（可缺，不影响跑批）  [{r['book']}] {r['sheet']}  <- {r['name']}")
     for r, note in res["bad"]:
         a(f"   !! 异常  [{r['book']}] {r['sheet']}  <- {r['name']}  ({note})")
 
@@ -837,7 +846,14 @@ def ship_capacity():
                 for cn in range(9, diff_col):
                     v1, v5 = row1.get(cn), row5.get(cn)
                     has_id = v1 is not None and str(v1).strip() != ""   # 货件号可能是 int（美客多）
-                    arrived = isinstance(v5, str) and "到货" in v5
+                    # 「到货」判定统一走 shipments.is_arrived_label：行5 可能是
+                    # '9/22空运\n到货'（带换行）或 '9/22卡航正在接收'，这里若各写一套
+                    # 就会一边认一边不认（2026-11-06）。
+                    try:
+                        import shipments as _Sh
+                        arrived = _Sh.is_arrived_label(v5)
+                    except Exception:
+                        arrived = isinstance(v5, str) and "到货" in v5
                     if arrived:
                         free += 1         # 已到货旧列 → 可回收复用（方案①）
                     elif not has_id and (v5 is None or (isinstance(v5, str) and v5.startswith("="))):

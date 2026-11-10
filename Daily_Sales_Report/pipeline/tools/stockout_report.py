@@ -103,9 +103,16 @@ SITES = [
          chans={"Amazon.in"}, orders=["亚马逊印度站点{m}订单报告.txt"]),
     dict(site="阿联酋", acct="主账号", rep="亚马逊阿拉伯联合酋长国管理库存报告{d}.csv", kind="inv",
          chans={"Amazon.ae"}, orders=["亚马逊阿拉伯联合酋长国站点{m}订单报告.txt"]),
-    dict(site="美国", acct="interflow", rep="interflow美国管理库存报告{d}.csv", kind="inv",
+    # interflow 后台的库存导出**文件名日期不自动更新**（20261110 快照里美国/沙特/英国
+    # 三份都还叫 …20261106.csv，内容确实是当天的）。只认 {d} 会判「缺报告」→
+    # 该站点库存整片不进断货分析（2026-11-10 又踩一次，与 config.WORKBOOKS 同步加兜底）。
+    dict(site="美国", acct="interflow",
+         rep=["interflow美国管理库存报告{d}.csv",
+              "interflow美国管理库存报告*.csv"], kind="inv",
          chans={"Amazon.com"}, drop={"Amazon.com.mx"}, orders=["interflow北美站点{m}订单报告.txt"]),
-    dict(site="加拿大", acct="interflow", rep="interflow加拿大管理库存报告{d}.csv", kind="inv",
+    dict(site="加拿大", acct="interflow",
+         rep=["interflow加拿大管理库存报告{d}.csv",
+              "interflow加拿大管理库存报告*.csv"], kind="inv",
          chans={"Amazon.ca"}, drop={"Amazon.com.mx"}, orders=["interflow北美站点{m}订单报告.txt"]),
     dict(site="澳大利亚", acct="interflow", rep="interflow澳大利亚管理库存报告{d}.csv", kind="inv",
          colmap="JP24", chans={"Amazon.com.au"}, orders=["interflow澳大利亚站点{m}订单报告.txt"]),
@@ -166,6 +173,23 @@ def _int(v):
     if isinstance(n, (int, float)):
         return int(n)
     return 0
+
+
+def _norm_sku(s):
+    """`amzn.gr.<SKU>-<hash>[-LN|-VG|-PO]` → `<SKU>`，与 analysis.normalize_sku 同源。
+
+    ⚠️ 库存报告的行也必须归并（2026-11-03 用户实测）：同一 ASIN 在欧盟/英国报告里
+    会拆成「裸 SKU + amzn.gr.* 别名行」两条，别名行常常 0 库存，单独成行会被
+    判成三级断货、按月度块历史日均算出天价补货单（G520 实测建议 2392 件，
+    而同 ASIN 的 G520 行有 677 可售 + 1242 在途 —— 采购看到的就是这种矛盾）。
+    月度块/历史销量查询早在用这条规则（2026-10-27 起），库存行不归并就是裂缝。
+    analysis 导入失败时原样返回 → 归并自动退化为无操作，行为与旧版一致。
+    """
+    try:
+        import analysis as A
+        return A.normalize_sku(s)
+    except Exception:
+        return str(s or "").strip()
 
 
 def _read_rows(path, sep):
@@ -296,6 +320,66 @@ def read_age(path):
     return out
 
 
+# ---- 库龄总表（第二来源，2026-11-03 加）--------------------------------
+# trunk/age_report.py 随月销表生成《亚马逊EMAG库龄情况总表*.xlsx》，固定放
+# trunk/data/库龄报表/。与 CSV 库龄报告（键=(marketplace代码, sku)，只能挂主账号）
+# 互补：总表按（账号, 站点, SKU）分行 —— 亚马逊/interflow/美客多/eMAG 四个账号
+# 都有，墨西哥等撞号 SKU 靠账号区分，interflow 与 eMAG 只有从这里才挂得上。
+AGE_XLSX_DIR = os.path.join(os.path.dirname(C.SNAP_BASE), "库龄报表")
+AGE_XLSX_GLOB = "亚马逊EMAG库龄情况总表*.xlsx"
+# ⚠ 总表第 7 档标签是「366+」（= inv-age-366-to-455 + 456-plus 之和；老格式 365-plus），
+#   本模块一律按**位置**映射回 AGE_TIER_LABEL（…/365+），否则 aged90 的键会对不上。
+_AGE_XLSX_CACHE = {}          # path -> (ages, period)；build 与缺货表共用一次解析
+
+
+def _find_age_xlsx():
+    """库龄报表目录里最新的总表；没有返回 None。忽略「xxx (1).xlsx」重复下载副本。"""
+    import glob as _glob
+    hits = [h for h in _glob.glob(os.path.join(AGE_XLSX_DIR, AGE_XLSX_GLOB))
+            if "(" not in os.path.basename(h)]
+    hits = hits or _glob.glob(os.path.join(AGE_XLSX_DIR, AGE_XLSX_GLOB))
+    return sorted(hits, key=os.path.getmtime)[-1] if hits else None
+
+
+def read_age_xlsx(path):
+    """库龄总表「本期明细」→ ({(账号, 站点, sku): {档: 件数}}, 期数)。
+
+    行 1 是标题（含期数，如「库龄明细（202610）」），行 2 表头，数据行 3 起；
+    列：账号/站点/SKU/品名/七档/合计/180天以上/180+占比 —— 七档按位置取数。
+    全 0 行不入 dict（查不到 = 没库龄，与挂不上同一表现）。
+    美客多行不进这个 dict：它的呆滞走 Resumen「陈旧库存」（ml_stale），
+    长期仓储费口径跟它不是一回事，混进来会把断货明细的美客多数字带歪。
+    """
+    if path in _AGE_XLSX_CACHE:
+        return _AGE_XLSX_CACHE[path]
+    wb = load_workbook(path, data_only=True, read_only=True)
+    ws = wb["本期明细"]
+    out, period = {}, None
+    for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+        if i == 1:                            # 标题行：库龄明细（202610）
+            m = re.search(r"[（(](\d{6})[)）]", str(row[0] or ""))
+            period = m.group(1) if m else None
+            continue
+        if i == 2 or not row or len(row) < 11 or row[0] is None or row[2] is None:
+            continue                          # 表头 / 空行 / 尾部填充行
+        acct, site, sku = (str(row[0]).strip(), str(row[1]).strip(),
+                           str(row[2]).strip())
+        tiers = {lab: _int(row[4 + j]) for j, lab in enumerate(AGE_TIER_LABEL)}
+        if any(tiers.values()):
+            out[(acct, site, sku)] = tiers
+    wb.close()
+    _AGE_XLSX_CACHE[path] = (out, period)
+    return out, period
+
+
+def age_xlsx_info():
+    """→ (总表路径, 期数)。给缺货表写 sheet 说明用（解析走缓存，不重复读）。"""
+    p = _find_age_xlsx()
+    if not p:
+        return None, None
+    return p, read_age_xlsx(p)[1]
+
+
 def _find(snap_dir, patterns, fmt):
     """候选模板 → 第一个命中的路径。支持 `*` / `?` 通配符（2026-10-24 加）。
 
@@ -397,6 +481,13 @@ def build(snap_dir, snap_day, age_files, lead_days, cover_days, moq=0,
     for p in age_files:
         ages.update(read_age(p))
 
+    # 库龄总表（第二来源，2026-11-03）：CSV 报告挂不上的 interflow / eMAG 从这里补。
+    # 键是（账号, 站点, sku），与 ages 的（marketplace代码, sku）分开，互不覆盖；
+    # 优先级：主账号 CSV 报告在 → 用 CSV（同一份原始数据的另一种封装，时点更贴快照），
+    # CSV 缺失或该账号本来就不在 CSV 覆盖范围 → 落到总表。
+    _age_x = _find_age_xlsx()
+    ages2, age_xlsx_per = read_age_xlsx(_age_x) if _age_x else ({}, None)
+
     rows, missing_rep, sales_only, warn = [], [], [], []
 
     # ---- 亚马逊系 ----
@@ -417,6 +508,30 @@ def build(snap_dir, snap_day, age_files, lead_days, cover_days, moq=0,
             missing_rep.append(f'{s["acct"]}-{s["site"]}: 报告为空/类型不符')
             continue
 
+        # ---- 归并 amzn.gr.* 别名行（2026-11-03，修「库存 0 却喊补 2392 件」）----
+        # 同一 ASIN 拆成「裸 SKU + amzn.gr.<SKU>-<hash> 变体行」时（欧盟 41 组 /
+        # 英国 165 组），变体行经常 0 库存。不归并的后果：裸行有货判不出缺货，
+        # 别名行 0 库存判成三级、按历史日均算出天价建议量 —— 一件东西两张嘴。
+        # 归并 = 数量求和（可售/预留/在途三段）、行名用基础 SKU、成员留档供注记。
+        gdata, gorder, gmem = {}, [], {}
+        for sku in order:
+            b = _norm_sku(sku)
+            if b in gdata:
+                m = gdata[b]
+                for k in ("afn-fulfillable-quantity", "afn-reserved-quantity",
+                          "afn-inbound-working-quantity", "afn-inbound-shipped-quantity",
+                          "afn-inbound-receiving-quantity"):
+                    m[k] = _int(m.get(k)) + _int(data[sku].get(k))
+                gmem[b].append(sku)
+            else:
+                gdata[b] = dict(data[sku])
+                gorder.append(b)
+                gmem[b] = [sku]
+        if len(gorder) < len(order):
+            warn.append(f'[归并] {s["acct"]}-{s["site"]}: {len(order)-len(gorder)} 个 '
+                        f'amzn.gr.* 别名行并入基础 SKU（库存求和，与月度块同规则）')
+        data, order = gdata, gorder
+
         # 销量：候选报告**只取第一个存在的**。欧盟/英国是同一份报告的两次下载
         # （21862 行 vs 21828 行），若把候选全读一遍，英国与欧洲的销量都会翻倍。
         agg = defaultdict(lambda: [0, 0, 0, 0])       # [近7天, 近30天, 当月累计]
@@ -426,14 +541,15 @@ def build(snap_dir, snap_day, age_files, lead_days, cover_days, moq=0,
             for d, sku, q, ch, cx in load_orders(op, "\t"):
                 if ch not in s["chans"] or ch in s.get("drop", ()) or cx:
                     continue
+                b = _norm_sku(sku)          # 订单里的 amzn.gr.* 别名也归到基础 SKU
                 if w30_lo <= d <= snap_iso:
-                    agg[sku][1] += q
+                    agg[b][1] += q
                 if w7_lo <= d <= snap_iso:
-                    agg[sku][0] += q
+                    agg[b][0] += q
                 if m_lo <= d <= m_end:
-                    agg[sku][2] += q
+                    agg[b][2] += q
                 if roll_lo <= d <= m_end:
-                    agg[sku][3] += q
+                    agg[b][3] += q
             # 匹配率闸：订单报告与库存报告不是同一账号时（interflow 北美实测 0%），
             # 该站点的销量整体不可用 —— 用它算日均会把可售天数算成假数。
             hit = len(set(agg) & set(data))
@@ -458,15 +574,30 @@ def build(snap_dir, snap_day, age_files, lead_days, cover_days, moq=0,
             # 预留库存：与可售**互斥**（仓 = 可售 + 预留，实测 G415 739=736+3）。
             # 日销表可售天数 =(F+E)/实时速度，所以这里也要带上。
             reserved = _int(f.get("afn-reserved-quantity"))
-            # 库龄只挂主账号：interflow 与主账号共用同一个 marketplace 代码，
-            # 拿 US/MX 的库龄去套 interflow 站点会张冠李戴。
-            tiers = ages.get((_mp_of(s["site"]), sku)) if s["acct"] == "主账号" else None
+            # 库龄：按成员 SKU 逐个查、档位求和 —— 裸行有库龄、别名行一般没有，
+            # 合并后求和才不丢；两边都没查到才是 None。
+            tiers = None
+            _acct = "亚马逊" if s["acct"] == "主账号" else s["acct"]
+            for msku in gmem[sku]:
+                t = (ages.get((_mp_of(s["site"]), msku))
+                     if s["acct"] == "主账号" else None)
+                if t is None:
+                    # 来源②（库龄总表）：按（账号, 站点, sku）精确挂，interflow 也覆盖
+                    t = ages2.get((_acct, s["site"], msku))
+                if t:
+                    if tiers is None:
+                        tiers = {lab: 0 for lab in AGE_TIER_LABEL}
+                    for lab in AGE_TIER_LABEL:
+                        tiers[lab] += _int(t.get(lab))
+            mem = gmem[sku]
             rows.append(dict(site=s["site"], acct=s["acct"], sku=sku,
                              name=f.get("product-name"), avail=avail, inbound=inb,
                              q7=q7, q30=q30, q_mtd=q_mtd, q_roll=q_roll,
                              reserved=reserved,
                              tiers=tiers, src="亚马逊",
-                             nosales=nosales))
+                             nosales=nosales,
+                             # 归并留档：多于 1 个成员时判定依据里要注明（用户可见）
+                             aliases=(mem if len(mem) > 1 else None)))
         # 有销量但库存报告里没有
         for sku, (q7, q30, q_mtd, q_roll) in agg.items():
             if sku not in data and q30 > 0:
@@ -487,6 +618,8 @@ def build(snap_dir, snap_day, age_files, lead_days, cover_days, moq=0,
                              # Resumen 只有 30 天汇总、没有逐日销量 → 当月累计不可得，
                              # 日销表口径（当月累计÷已过天数）对美客多退化为用近30天日均。
                              q7=None, q30=sold30, q_mtd=None, q_roll=None, reserved=0,
+                             # 美客多不挂库龄总表：总表的美客多行来自「长期仓储费」报告，
+                             # 与 Resumen「陈旧库存」（ml_stale）口径不同，混用会打架
                              tiers=None, src="美客多",
                              ml_stale=_int(d["stale"]), ml_cover=d["cover_w"],
                              ml_urgency=d["urgency"], ml_status=d["status"]))
@@ -516,7 +649,9 @@ def build(snap_dir, snap_day, age_files, lead_days, cover_days, moq=0,
             rows.append(dict(site="罗马尼亚", acct="eMAG", sku=sku, name=d["name"],
                              avail=d["sellable"], inbound=0, q7=q7, q30=q30,
                              q_mtd=q_mtd, q_roll=q_roll, reserved=0,
-                             tiers=None, src="eMAG"))
+                             # eMAG 库存报告没有库龄字段，只能从库龄总表挂（2026-11-03）
+                             tiers=ages2.get(("eMAG", "罗马尼亚", sku)) or None,
+                             src="eMAG"))
     else:
         missing_rep.append("罗马尼亚: EMAG罗马尼亚库存报告{d}.xlsx".format(**fmt))
 
@@ -866,10 +1001,18 @@ def write_md(path, rows, sales_only, summary, meta):
         for m in meta["missing"]:
             A(f"- {m}")
     if meta.get("warn"):
-        A("")
-        A("### 数据异常（销量已跳过）\n")
-        for m in meta["warn"]:
-            A(f"- ⚠️ {m}")
+        _merge = [m for m in meta["warn"] if m.startswith("[归并]")]
+        _anom = [m for m in meta["warn"] if not m.startswith("[归并]")]
+        if _anom:
+            A("")
+            A("### 数据异常（销量已跳过）\n")
+            for m in _anom:
+                A(f"- ⚠️ {m}")
+        if _merge:
+            A("")
+            A("### 别名归并（amzn.gr.* → 基础 SKU，正常动作）\n")
+            for m in _merge:
+                A(f"- {m}")
     if meta.get("dups"):
         A("")
         A("### 重复下载（同内容不同文件名，只取一份）\n")
@@ -914,6 +1057,13 @@ def main():
 
     print(f"快照: {snap_dir}")
     print(f"库龄报告: {len(age_files)} 份" + ("".join(f"\n  - {os.path.basename(x)}" for x in age_files)))
+    _ax = _find_age_xlsx()
+    if _ax:
+        _, _ax_per = read_age_xlsx(_ax)
+        print(f"库龄总表: {os.path.basename(_ax)}"
+              + (f"（期数 {_ax_per}，CSV 缺失时用它挂库龄，interflow/eMAG 只此一源）" if _ax_per else ""))
+    else:
+        print("库龄总表: 未找到（trunk/data/库龄报表/ 下没有《亚马逊EMAG库龄情况总表*.xlsx》）")
     dups = dup_order_reports(snap_dir)
     rows, sales_only, missing, warn, snap_dt, (w7, w30) = build(
         snap_dir, snap_day, age_files, a.lead, a.cover, a.moq,
@@ -963,9 +1113,17 @@ def main():
         for m in missing:
             print("  -", m)
     if warn:
-        print("\n[数据异常 · 销量已跳过]")
-        for m in warn:
-            print("  -", m)
+        _merge = [m for m in warn if m.startswith("[归并]")]
+        _anom = [m for m in warn if not m.startswith("[归并]")]
+        if _anom:
+            print("\n[数据异常 · 销量已跳过]")
+            for m in _anom:
+                print("  -", m)
+        if _merge:
+            # 归并是正常动作，不是异常，单独归类免得误导看日志的人
+            print("\n[别名归并]")
+            for m in _merge:
+                print("  -", m)
     if dups:
         print("\n[重复下载]")
         for keep, dup in dups:

@@ -15,13 +15,22 @@
 实测（202610）：507 单 / 517 件，日销表比月销表高 0.95%。9 月同构（115 件）。
 → 这是稳定机制，不是偶发，必须校正。
 
-方案 B（用户选定）：只在换月封存前校正
---------------------------------------
-不碰日常跑批路径（日内日销表仍略高，可接受）。`month_rollover.build_archive()`
-归档前调用本模块，用当期**最新订单报告的最终状态**把明细校正一遍：
+方案 B（2026-11-02 用户拍板）+ 日常化（2026-11-04 用户拍板）
+------------------------------------------------------------
+两条路径共用 `fix_sales_sheet`（只改状态+quantity 两列，不增删行）：
 
-  报告最终 Cancelled、明细行却不是 Cancelled
-      → 明细 `order-status` 写 'Cancelled'，`quantity` 写 0
+· 日常路径（2026-11-04 起，默认开）：`runner.process()` 在 append_sales 之后调用
+  `load_reports(本簿订单报告)` + `fix_sales_sheet`，用**当天报告终态**把 Cancelled
+  回写进明细（不冻结月列——日销列 SUMIFS 活公式自动回落，月汇总块当月列随后在
+  同一轮 apply_month_summary 里滚动）。跑批日志看「[回写]」行；
+  `run.py --no-status-fix`（透传 runner 同名参数）可关。
+  失败只提示不炸簿；就算某天漏跑，封存路径仍兜底。
+
+· 封存路径（原方案B）：`month_rollover.build_archive()` 归档前调用本模块，用当期
+  **最新订单报告的最终状态**把明细校正一遍后 `freeze_month_cols` 冻结月列。
+
+报告最终 Cancelled、明细行却不是 Cancelled
+    → 明细 `order-status` 写 'Cancelled'，`quantity` 写 0
 
 两列都要改：
   · 日销列 SUMIFS 只求和 quantity → 必须置 0 才算不到
@@ -103,6 +112,19 @@ def _read_report(path):
                 continue
             out[(p[i_aoi].strip(), sku, pdv[:19])] = p[i_st].strip()
         return out
+
+
+def load_reports(paths):
+    """显式路径的若干订单报告 → (合并状态 dict, 份数)。
+    键与 append_sales 组合键一致。日常跑批（runner.process）按本簿已解析的
+    报告路径调用，避免重扫整个快照目录；封存补修仍走 load_final_status。"""
+    rep, nfile = {}, 0
+    for p in paths:
+        got = _read_report(p)
+        if got is not None:
+            nfile += 1
+            rep.update(got)      # 同键以最后读到为准
+    return rep, nfile
 
 
 def load_final_status(period, snap=None):
@@ -203,6 +225,91 @@ def fix_sales_sheet(ws, rep, dry=False):
             row[o_q].value = 0
     return dict(sheet=ws.title, ok=True, scanned=n_scan, fixed=n_fix, qty=q_fix,
                 rep_cancel=n_rep_cancel, missing=n_missing, samples=samples)
+
+
+# ---------------------------------------------------------------- 非亚马逊渠道（eMAG）
+# 2026-11-04：eMAG 的有效性公式（订单数据!AH2）= 状态含 Canceled/Storno → 0，其余 1。
+# 但 append_sales 只灌新单、不回写状态 → 订单后来被 Storno，明细仍是 Finished，
+# 日销/月汇总继续计销（实测 10 月 5 件）。这里用当天报告终态把「报告已取消、明细未取消」
+# 的行改成取消态。**只改状态列，不动数量**（数量是真实成交件数，有效性靠状态判定）。
+_EMAG_CANCEL_KW = ("Canceled", "Cancelled", "Storno")
+
+
+def load_emag_reports(paths):
+    """eMAG xlsx 订单报告 → ({订单编号: 状态}, 份数)。列名按 config.EMAG_COL_ALIAS 归一。"""
+    import config as C
+    alias = getattr(C, "EMAG_COL_ALIAS", {}) or {}
+    out, nfile = {}, 0
+    for p in paths:
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
+            ws = wb[wb.sheetnames[0]]
+            it = ws.iter_rows(values_only=True)
+            raw = next(it, None)
+            if not raw:
+                wb.close()
+                continue
+            hdr = [alias.get(str(x).strip(), str(x).strip()) if x is not None else ""
+                   for x in raw]
+            if "订单编号" not in hdr or "订单状态" not in hdr:
+                wb.close()
+                continue
+            i_oid, i_st = hdr.index("订单编号"), hdr.index("订单状态")
+            for r in it:
+                if not r or len(r) <= max(i_oid, i_st) or r[i_oid] is None:
+                    continue
+                out[str(r[i_oid]).strip()] = str(r[i_st] or "").strip()
+            nfile += 1
+            wb.close()
+        except Exception:
+            continue
+    return out, nfile
+
+
+def fix_emag_sheet(ws, reps, dry=False):
+    """eMAG 明细状态回写：报告终态是取消 → 明细订单状态改写成报告值。
+    返回统计 dict（scanned / fixed / qty / samples）。"""
+    hdr = head = None
+    for r in range(1, 6):
+        names = [(str(c.value).strip() if c.value is not None else "") for c in ws[r]]
+        if "订单编号" in names and "订单状态" in names:
+            hdr = r
+            head = {n: i + 1 for i, n in enumerate(names) if n}
+            break
+    if hdr is None:
+        return dict(sheet=ws.title, ok=False, err="表头缺 订单编号/订单状态")
+    c_oid, c_st = head["订单编号"], head["订单状态"]
+    c_q = head.get("数量")
+    c_sku = head.get("产品代码")
+    n_scan = n_fix = 0
+    q_fix = 0.0
+    samples = []
+    for r in range(hdr + 1, ws.max_row + 1):
+        oid = ws.cell(r, c_oid).value
+        if oid is None or not str(oid).strip():
+            continue
+        n_scan += 1
+        st_rep = reps.get(str(oid).strip())
+        if not st_rep or not any(k.lower() in st_rep.lower() for k in _EMAG_CANCEL_KW):
+            continue
+        st_now = str(ws.cell(r, c_st).value or "").strip()
+        if any(k.lower() in st_now.lower() for k in _EMAG_CANCEL_KW):
+            continue
+        qv = ws.cell(r, c_q).value if c_q else None
+        try:
+            qv = float(qv or 0)
+        except (TypeError, ValueError):
+            qv = 0.0
+        n_fix += 1
+        q_fix += qv
+        if len(samples) < 5:
+            samples.append((str(oid).strip(), ws.cell(r, c_sku).value if c_sku else "",
+                            st_now, st_rep, qv))
+        if not dry:
+            ws.cell(r, c_st).value = st_rep
+    return dict(sheet=ws.title, ok=True, scanned=n_scan, fixed=n_fix, qty=q_fix,
+                samples=samples)
 
 
 # ---------------------------------------------------------------- 月汇总

@@ -50,3 +50,6 @@ Thumbs.db
 *.rar
 *.mp4
 *.mov
+
+# ---------- 探针用临时依赖（vendored psutil，无代码引用，勿入库）----------
+Daily_Sales_Report/_probe_lib/

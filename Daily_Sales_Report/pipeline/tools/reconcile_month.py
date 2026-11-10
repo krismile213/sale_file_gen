@@ -139,10 +139,22 @@ def read_day_side(period, month):
 
 
 # ---------------- 月销表 ----------------
+def _msx_path(period):
+    """月销表文件名随月份变（`月销售总表.xlsx` / `月销售总表（10月）.xlsx` 两种历史命名），
+    不能硬编码。优先精确名，否则取该周期目录下最新的一份。"""
+    d = os.path.join(REPO, "trunk", "result", "数据归属周期", str(period))
+    exact = os.path.join(d, "月销售总表.xlsx")
+    if os.path.exists(exact):
+        return exact
+    cands = sorted(glob.glob(os.path.join(d, "月销售总表*.xlsx")),
+                   key=os.path.getmtime, reverse=True)
+    if not cands:
+        raise SystemExit(f"找不到月销表：{d}/月销售总表*.xlsx")
+    return cands[0]
+
+
 def read_month_side(period, month):
-    p = os.path.join(REPO, "trunk", "result", "数据归属周期", str(period), "月销售总表.xlsx")
-    if not os.path.exists(p):
-        raise SystemExit(f"找不到月销表：{p}")
+    p = _msx_path(period)
     wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
     sn = f"{str(period)[:4]}年"
     if sn not in wb.sheetnames:

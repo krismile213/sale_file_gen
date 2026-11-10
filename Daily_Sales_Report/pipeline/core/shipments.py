@@ -11,7 +11,8 @@
   · 子文件夹（或仓库代码）→ 目标簿+分析表：
       欧盟+英国                → 欧盟英国簿，仓库分 英国（BHX4/LBA4/...）/ 欧洲（HAJ1/DTM2/...）
       北美                     → 北美加拿大簿，仓库分 美国/加拿大（YYZ*/YYC*/YOW*/YHM*）/墨西哥（MEX*）
-      interflow                → Interflowd 三簿，仓库分 美（默认）/加/澳（XSY*/BWU*）/阿联酋（DXB* 等）
+      interflow                → Interflowd 五簿，仓库分 美（默认）/加/澳（XSY*/BWU*）/阿联酋（DXB* 等）
+                                 /沙特（RUH/JED/DMM）/英国（BHX*/LBA*/EMA* 等）
       日本/印度/澳大利亚        → 对应单站点簿
       根目录/未知文件夹         → 按仓库回落欧盟英国簿（旧约定）
   · 发货日期格式随来源：欧/印/澳=DD/MM/YYYY，北美/interflow=MM/DD/YYYY，日本=YYYY/MM/DD；
@@ -55,6 +56,14 @@ UK_WAREHOUSES = {
     "CWL1", "CWL2", "NCL1", "EUK5", "XUKA",
 }
 
+# 英国仓**前缀**（2026-11-06）：代码表是手工穷举的，新仓（EMA5 这种）一出现就漏。
+# EMA5 实拍：interflow 发英国 EMA5 的 FBA15MRX4YLH 既不在 UK_WAREHOUSES 里 →
+#   ① interflow 分支兜底成「美国」，185 件写进 Interflowd北美「美国」表；
+#   ② 若放进「欧盟+英国」文件夹，target_scope 也会判成「欧洲」。
+# 改为前缀优先、精确表兜底：只要前缀命中，英国仓怎么扩都不会再认错。
+_UK_PREFIX = ("BHX", "LBA", "MAN", "LTN", "EMA", "CWL", "NCL", "EUK", "XUK",
+              "XBH", "GLA", "EDI", "SOU", "PFS", "MME", "DSA")
+
 # 表名（欧盟英国簿）
 UK_SHEET = "英国-每日库存分析表"
 EU_SHEET = "欧洲-每日库存分析表"
@@ -66,6 +75,7 @@ BOOK_INT_NA = "Interflowd北美加拿大库存销售表.xlsx"
 BOOK_INT_AE = "Interflowd阿联酋库存销售表.xlsx"
 BOOK_INT_AU = "Interflowd澳大利亚库存销售表.xlsx"
 BOOK_INT_SA = "Interflowd沙特库存销售表.xlsx"   # 2026-10-24：沙特仓 RUH8 独立成簿
+BOOK_INT_UK = "Interflowd英国库存销售表.xlsx"   # 2026-11-06：interflow 英国仓 EMA5 独立成簿
 BOOK_JP = "日本库存销售表.xlsx"
 BOOK_IN = "印度库存销售表.xlsx"
 BOOK_AU = "澳大利亚库存销售表.xlsx"
@@ -203,9 +213,17 @@ def read_shipment(path, fmt="DMY"):
     return d
 
 
+def is_uk_wh(wh):
+    """英国仓判定（**前缀优先**，精确表兜底）——2026-11-06 起 EMA5 这类新仓也算英国。"""
+    w = _wh_of(wh)
+    if not w:
+        return False
+    return w in UK_WAREHOUSES or w.startswith(_UK_PREFIX)
+
+
 def target_scope(wh):
     """仓库代码 → ('英国'|'欧洲', 分析表名)——欧盟英国簿专用。"""
-    if wh.upper() in UK_WAREHOUSES:
+    if is_uk_wh(wh):
         return "英国", UK_SHEET
     return "欧洲", EU_SHEET
 
@@ -218,20 +236,30 @@ def _wh_of(wh):
 # 目的：抓「TSV 放错文件夹」—— 这类错误比"仓库代码不认识"更常见，而且以前会静默落错簿
 # （如沙特 RUH8 放进 interflow → 兜底成美国）。只做「仓库明确属于别国」的反向校验，
 # 美国/欧洲仓代码无法穷举（未知前缀一律不判），因此不会误报。
+# 日本/印度前缀（2026-11-06 按 pipeline/docs/亚马逊FBA仓库代码-站点对照.md 补全）
+# · XHD = 日本转运中心（XHD3 海老名 / XHD4 流山）；此前缺它 → XHD4 被回落成欧洲表。
+# · ISK3 = 印度 Bhiwandi（Thane），**不是伊斯坦布尔**（伊斯坦布尔机场码是 IST/ISL）。
+_JP_PREFIX = ("XJE", "XJW", "XHD", "XKX", "NRT", "KIX", "FSZ", "HSG", "NGO", "OKJ",
+              "HND", "HFO", "HFY", "HIY", "TYO", "TPB", "TPX", "TPN", "TPF", "TPFC",
+              "QCB", "VJW", "VJN", "VJM", "SOO", "SOW", "STK", "NPB")
+_IN_PREFIX = ("BOM", "ISK", "DEL", "BLR", "HYD", "MAA", "PNQ", "ATX", "JPX", "CCX",
+              "LKO", "AMD", "DEX", "SIDA", "FBHB", "FIDA", "CJB", "SLDK", "SBOB",
+              "XWAA", "SATB", "XSAJ", "BLX", "SGAA")
+
 _REGION_PREFIX = [
     ("CA", _CA_PREFIX),
     ("MX", _MX_PREFIX),
     ("AU", _AU_PREFIX),
     ("AE", _AE_PREFIX),
     ("SA", _SA_PREFIX),
-    ("JP", ("XJE", "NRT", "KIX", "FSZ", "OKJ")),
-    ("IN", ("BOM", "ISK", "DEL", "BLR", "HYD", "MAA", "PNQ")),
+    ("JP", _JP_PREFIX),
+    ("IN", _IN_PREFIX),
 ]
 
 # 文件夹 → 允许的地区集合（未登记的文件夹不校验）
 _FOLDER_REGIONS = {
     "北美": {"US", "CA", "MX"},
-    "interflow": {"US", "CA", "AU", "AE", "SA"},
+    "interflow": {"US", "CA", "AU", "AE", "SA", "UK"},
     "中东": {"AE", "SA"},
     "欧盟+英国": {"UK", "EU"},
     "欧盟英国": {"UK", "EU"},
@@ -248,7 +276,7 @@ _FOLDER_REGIONS = {
 def region_of(wh):
     """仓库代码 → 地区标签（CA/MX/AU/AE/SA/JP/IN/UK）；无法判定返回 None。"""
     w = _wh_of(wh)
-    if w in UK_WAREHOUSES:
+    if is_uk_wh(w):
         return "UK"
     for tag, prefixes in _REGION_PREFIX:
         if w.startswith(prefixes):
@@ -304,6 +332,10 @@ def int_target_of(wh):
 
     ⚠️ 沙特前缀（RUH/JED/DMM）必须显式拦下：Interflowd 没有沙特簿，若落到兜底分支
     会被算成"美国"（2026-10-20 FBA15MHHH99G 事故）。返回 SKIP 由 load_shipments 跳过。
+
+    ⚠️ 英国仓同理（2026-11-06 FBA15MRX4YLH/EMA5 事故）：interflow 也发英国仓，
+    以前 EMA5 不在 UK_WAREHOUSES 精确表里 → 兜底成"美国"，185 件美国在途永远消不掉。
+    现在按前缀命中即落 Interflowd英国簿（2026-11-06 新建）。
     """
     w = _wh_of(wh)
     if w.startswith(_CA_PREFIX):
@@ -314,16 +346,28 @@ def int_target_of(wh):
         return BOOK_INT_AE, "阿联酋-每日库存分析表"
     if w.startswith(_SA_PREFIX):
         return BOOK_INT_SA, "沙特-每日库存分析表"
+    if is_uk_wh(w):
+        return BOOK_INT_UK, "英国-每日库存分析表"
     return BOOK_INT_NA, "美国-每日库存分析表"
 
 
 def resolve_target(folder, wh):
     """子文件夹 + 仓库代码 → (书文件名|None, 分析表名|None, 发货日期格式)。
     未知文件夹/根目录 → (None, None, "DMY")，由调用方回落欧盟英国簿旧规则。
+
+    **仓库前缀强制归站（2026-11-06）**：日本/印度仓前缀命中时，**不看文件夹**直接落对应簿。
+    起因：XHD4（日本流山 TC）不在任何前缀表 → X/FBA15GL271G1（2345 件）被回落成欧洲表；
+          ISK3（印度 Bhiwandi）同理，FBA15MTLJSTM（688 件）落了欧洲表。
+    这两个站点的仓代码是可穷举且无歧义的（不像欧美仓一堆未知新码），所以直接强判。
     """
     fd = (folder or "").strip().lower()
+    w = _wh_of(wh)
+    # ① 日本 / 印度仓前缀强判（覆盖文件夹放错、或放根目录的情形）
+    if w.startswith(_JP_PREFIX):
+        return BOOK_JP, "日本-每日库存分析表", "YMD"
+    if w.startswith(_IN_PREFIX):
+        return BOOK_IN, "印度-每日库存分析表", "DMY"
     if fd == "中东":
-        w = _wh_of(wh)
         if w.startswith(_AE_PREFIX):
             # 阿联酋（AUH/DXB/DXF/XJB/FJR）源报告用 DD/MM/YYYY（实测 29/09、06/10、13/10）
             return BOOK_AE, "阿联酋-每日库存分析表", "DMY"
@@ -363,10 +407,11 @@ def guess_transport(sid, scope, total_qty):
     return "卡航", note
 
 
-def label_of(ship, transport, arrive_md=None, arrived=False):
-    """行5 标签：'M/D运输'（到货后补 '到货'）。
+def label_of(ship, transport, arrive_md=None, arrived=False, today=None):
+    """行5 标签：'M/D运输'（到货后补 '到货+打标日'）。
     · arrive_md=(月,日) → 'M/D运输M/D到货'
-    · arrived=True（PDF 货件用「到货.txt」标记，无确切到货日）→ 'M/D运输到货'
+    · arrived=True（PDF 货件用「到货.txt」标记，无确切到货日）→ 'M/D运输到货M/D'
+      末尾那个 M/D 是**打标日期**，「到货保留 5 天」的计时起点（见 arrived_expired）。
     """
     if not ship["ship_md"]:
         base = transport
@@ -375,7 +420,8 @@ def label_of(ship, transport, arrive_md=None, arrived=False):
     if arrive_md:
         return base + f"{arrive_md[0]}/{arrive_md[1]}到货"
     if arrived:
-        return base + "到货"
+        t = today or datetime.date.today()
+        return base + f"到货{t.month}/{t.day}"
     return base
 
 
@@ -544,7 +590,7 @@ def plan_columns(ws, ships, first_col, last_col):
         v5 = row5.get(c)
         # 占位公式列（如 =TEXT(数据透视图!$G$1,"M/D海运")）视同空列位
         placeholder = isinstance(v5, str) and v5.startswith("=")
-        arrived = isinstance(v5, str) and "到货" in v5
+        arrived = is_arrived_label(v5)
         old_id = row1.get(c)
         if old_id is not None and old_id in cur_ids:
             continue                # 本批要复用的在途票 → 已用，不算空位
@@ -572,6 +618,257 @@ def plan_columns(ws, ships, first_col, last_col):
     # recycle 只报「真正被本批新票占用的已到货列」（未用到的历史列不动、不清）
     recycle = {c for c in new.values() if c in arrived_cols}
     return assign, existing, new, overflow, recycle
+
+
+ARRIVE_WORDS = ("到货", "接收")
+
+# 行5 标记（2026-11-06 用户拍板，共两态 + 一个数量级调节）：
+#   未标记          = 还没被库存识别 → 全部计入 H 调拨在途合计
+#   「到货」        = 已入仓、库存报告已完全识别 → 整列从 H 剔除
+#   **「部分到货」** = 库存报告只识别了一部分 → 行5 仍写「部分到货」，数量扣到剩余未识别件数
+#   ⚠️ 「未发」态已在 2026-11-06 由用户明确取消（"未发不用"），不再产生。
+# ⚠️ H 公式只认「到货/接收」两个词：=IF(ISNUMBER(FIND("到货",I5)),0,IF(I5="",0,I5))
+#    「部分到货」也含「到货」二字 → FIND 会命中 → 整列被计 0。
+#    所以「部分到货」**不能只打标签**，必须同时把该列数量改成「票总量 − 已识别件数」，
+#    行5 用 `M/D运输部分到货`，数据格写剩余数。二者缺一就会重复计数或全丢。
+ARRIVE_ONLY = "到货"
+PARTIAL = "部分到货"
+NOT_SHIPPED = "未发"          # 已废弃：仅为兼容历史标签，不再写入
+
+# 到货后保留天数（2026-11-06 用户：「到货的保留5天吧」）
+#   打完「到货」标签后，该列继续留在表上 KEEP_ARRIVED_DAYS 天（行5 标签 + 数量都不动，
+#   H 已经因为标签计 0，留着只为对账留痕 / 方便撤销），超期后由 transit_audit --prune 清空。
+#   到期日怎么算：优先用「打标签那天」（行5 里记 `到货11/6`），
+#   没有记录就退化成「发货日 + KEEP_ARRIVED_DAYS 天」。
+KEEP_ARRIVED_DAYS = 5
+ARRIVE_DATE_RE = re.compile(r"到货\s*(\d{1,2})/(\d{1,2})")
+
+
+def is_arrived_label(label):
+    """行5 标签是否**完全**完成（「到货」或「正在接收」，且不是「部分到货」）。
+
+    ⚠️ 必须先去换行再判：日本簿写的是 `'9/22空运\\n到货'`（Alt+Enter 换行）。
+    ⚠️ 必须先排除「部分到货」：它包含「到货」二字，若不先排除会被当成整票到货。
+    """
+    s = str(label or "").replace("\n", "").replace("\r", "").replace(" ", "")
+    if PARTIAL in s:
+        return False
+    return any(w in s for w in ARRIVE_WORDS)
+
+
+def is_partial_label(label):
+    """行5 是否为「部分到货」（数量已扣到剩余未识别件数）。"""
+    s = str(label or "").replace("\n", "").replace("\r", "").replace(" ", "")
+    return PARTIAL in s
+
+
+def arrive_md(label):
+    """行5 里记录的「打标日期」→ (月,日)；没记就 None。
+    形如 `9/22海运到货11/6` / `9/22海运\\n到货11/6`。"""
+    s = str(label or "").replace("\n", "").replace("\r", "").replace(" ", "")
+    m = ARRIVE_DATE_RE.search(s)
+    if not m:
+        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    if not (1 <= a <= 12 and 1 <= b <= 31):
+        return None
+    return a, b
+
+
+def arrived_expired(label, ref_date, keep_days=KEEP_ARRIVED_DAYS):
+    """该「已到货」列是否已过保留期（可以清掉）。
+
+    · 记了打标日 → 打标日 + keep_days 天 ≤ 参照日 ⇒ 到期；
+    · 没记打标日 → 退化成「发货日 + keep_days 天」≤ 参照日（对老票够用）；
+    · 两个日期都解析不出（如标签只有「空运到货」）→ 视为到期，直接清。
+    """
+    def _d(md, ref):
+        if not md or ref is None:
+            return None
+        for yr in (ref.year, ref.year - 1):
+            try:
+                d = datetime.date(yr, md[0], md[1])
+            except ValueError:
+                continue
+            if d <= ref:
+                return d
+        return None
+
+    if not is_arrived_label(label):
+        return False
+    ref = _d(arrive_md(label), ref_date) or _d(_label_md(label), ref_date)
+    if ref is None:
+        return True
+    return (ref_date - ref).days >= keep_days
+
+
+def is_unshipped_label(label):
+    s = str(label or "").replace("\n", "").replace("\r", "").replace(" ", "")
+    return NOT_SHIPPED in s
+
+
+def label_base(label):
+    """行5 标签去掉所有状态词，只留 `M/D运输`。
+
+    ⚠️ 必须先剥「部分到货」再剥「到货」：否则 `10/13空运部分到货` 会先被
+    `split("到货")` 切成 `10/13空运部分`，状态词「部分」残留、反复处理会累积。"""
+    s = str(label or "").replace("\r", "").replace(" ", "")
+    base = s.split("\n")[0]
+    if PARTIAL in base:
+        base = base.split(PARTIAL)[0]
+    for w in ARRIVE_WORDS + (NOT_SHIPPED,):
+        base = base.split(w)[0]
+    return base.strip()
+
+
+def flag_label(ws, col, flag, transport=None, on_date=None):
+    """给某货件列的 行5 打标：'arrived'（到货）/ 'partial'（部分到货）/ 'clear'（撤销）。
+    保留原有「M/D运输」前缀，只动标记部分。返回 (旧标签, 新标签)。
+
+    · 打「到货」时会把打标日期写进标签（`9/22海运到货11/6`）—— 这是「到货保留 5 天」
+      的计时起点（见 `arrived_expired`），已打过的保留原日期，不重复写。
+    · 调 'partial' 只改标签，**数量调整由调用方负责**（见 apply_partial）。"""
+    old = ws.cell(5, col).value
+    base = label_base(old) or (transport or "")
+    if flag == "arrived":
+        keep = arrive_md(old)
+        if keep and on_date:
+            stamp = f"{keep[0]}/{keep[1]}"          # 已记过 → 保持原有起始日
+        elif on_date:
+            stamp = f"{on_date.month}/{on_date.day}"
+        else:
+            stamp = ""
+        new = base + ARRIVE_ONLY + stamp
+    elif flag == "partial":
+        new = base + PARTIAL
+    elif flag == "unshipped":
+        new = base + NOT_SHIPPED
+    else:
+        new = base
+    ws.cell(5, col).value = new
+    return old, new
+
+
+def partial_shortfall(ws, col, current_qty, recognised):
+    """把某列「部分到货」的数量调成「当前总量 − 已识别件数」。
+    返回 (原总量, 新总量, 扣减件数)。若无扣减返回 None。
+    ⚠️ 必须在**还没扣过**的列上调用；重复调用要用 `--recalc` 从货件报告重灌数量。"""
+    cur = current_qty
+    if cur is None or recognised is None or recognised <= 0:
+        return None
+    new = max(int(cur) - int(recognised), 0)
+    if new == cur:
+        return None
+    return int(cur), new, int(cur) - new
+
+
+def strip_unshipped(ws, first_col=None, last_col=None):
+    """行5 含「未发」的货件列 → 数据区数量全部置 0（幂等）。
+    「未发」态已于 2026-11-06 取消，此函数仅用于清理历史遗留标签。"""
+    if first_col is None or last_col is None:
+        first_col, last_col = detect_sheet_cols(ws)
+    n = 0
+    for c in range(first_col, last_col + 1):
+        if not is_unshipped_label(ws.cell(5, c).value):
+            continue
+        for r in range(DATA_FIRST_ROW, (ws.max_row or DATA_FIRST_ROW) + 1):
+            v = ws.cell(r, c).value
+            if isinstance(v, (int, float)) and v:
+                ws.cell(r, c).value = 0
+                n += 1
+    return n
+
+
+def _label_md(label):
+    """行5 标签 → (月, 日)。'10/27卡航' → (10,27)；'空运'（无日期）→ None。"""
+    m = re.match(r"^\s*(\d{1,2})/(\d{1,2})",
+                 str(label or "").replace("\n", "").replace("\r", ""))
+    if not m:
+        return None
+    a, b = int(m.group(1)), int(m.group(2))
+    if not (1 <= a <= 12 and 1 <= b <= 31):
+        return None
+    return a, b
+
+
+def sort_shipment_cols(ws, first_col=None, last_col=None, dry=False):
+    """货件列按发货日期**从旧到新**重排（2026-11-06 用户要求）。
+
+    · 只重排「已占用」列（行1 有货件号）：列位集合不变，空列位与占位公式列原地不动；
+    · 移动的只有 行1（货件号）、行5（标签）、数据区（行7+ 数值）；
+      行2/3/4/6 是**每列自引用**的公式（=IFERROR(LEFT(L5,5)...)、=SUBTOTAL(9,L7:L1046)），
+      货件换到哪一列都还指自己，不需要跟着搬 —— 这也是只搬值就安全的原因；
+    · 日期取自 行5 标签的 M/D（人工改过的标签优先）。无日期的票（PDF 货件）排最后，
+      再按货件号稳定排序；已排好序时零写入（幂等）。
+
+    返回 (n_moved, n_cols)；dry=True 只算不写。
+    """
+    if first_col is None or last_col is None:
+        first_col, last_col = detect_sheet_cols(ws)
+
+    occ = []                                   # [(col, id_val, label)]
+    for c in range(first_col, last_col + 1):
+        v1 = ws.cell(1, c).value
+        if v1 is not None and str(v1).strip():
+            occ.append((c, v1, ws.cell(5, c).value))
+    if len(occ) < 2:
+        return 0, 0
+
+    def key(rec):
+        md = _label_md(rec[2])
+        return (0, md, str(rec[1])) if md else (1, (99, 99), str(rec[1]))
+
+    order = sorted(occ, key=key)
+    if [r[0] for r in order] == [r[0] for r in occ]:
+        return 0, 0                            # 已是升序，一个格都不动
+
+    last_row = max(ws.max_row or DATA_FIRST_ROW, DATA_FIRST_ROW)
+    payload = []
+    for c, vid, lab in order:
+        cells = {}
+        for r in range(DATA_FIRST_ROW, last_row + 1):
+            v = ws.cell(r, c).value
+            if v is not None and not (isinstance(v, str) and v.strip() == ""):
+                cells[r] = v
+        payload.append((vid, lab, cells))
+
+    if dry:
+        return len(payload), len(occ)
+
+    # 先全清（含数据区），再按新顺序写回 —— 否则互换两列会互相覆盖
+    for c, _vid, _lab in occ:
+        ws.cell(1, c).value = None
+        ws.cell(5, c).value = None
+        for r in range(DATA_FIRST_ROW, last_row + 1):
+            ws.cell(r, c).value = None
+    pos = [c for c, _v, _l in occ]             # 保持原有列位集合（升序位置）
+    for c, (vid, lab, cells) in zip(pos, payload):
+        ws.cell(1, c).value = vid
+        ws.cell(5, c).value = lab
+        for r, v in cells.items():
+            ws.cell(r, c).value = v
+    return len(payload), len(occ)
+
+
+def clear_shipment_col(ws, col, first_col=None, last_col=None):
+    """把某一列的货件痕迹清干净（行1 货件号 / 行5 标签 / 数据区），列位本身保留可复用。
+    用于「这票根本不该落本簿」的纠错（如 2026-11-06 FBA15MRX4YLH 误落美国表 L 列）。
+    返回清掉的格数。
+    """
+    if first_col is None or last_col is None:
+        first_col, last_col = detect_sheet_cols(ws)
+    if not (first_col <= col <= last_col):
+        return 0
+    n = 0
+    for r in (1, 5):
+        if ws.cell(r, col).value is not None:
+            ws.cell(r, col).value = None
+            n += 1
+    for r in range(DATA_FIRST_ROW, (ws.max_row or DATA_FIRST_ROW) + 1):
+        if ws.cell(r, col).value is not None:
+            ws.cell(r, col).value = None
+            n += 1
+    return n
 
 
 def _sku_rows(ws, max_row=None):
@@ -655,6 +952,12 @@ def apply_sheet(ws, ships, assign, new, recycle=()):
             ws.cell(5, c).value = s["label"]
             _ensure_subtotal(ws, c, last_row)
         filled = miss = refill = 0
+        # 已存在的列如果**行5 是空的**，补写标签（2026-11-06）：人工只粘了货件号+数量的列
+        # 行2/3/4 全是靠 行5 前 5 字解析的，行5 不写 → 发货日期/时效/预计到货全空，
+        # 排序也认不出日期（实测 澳大利亚簿 FBA15GL1Z3G7 就是这样）。
+        if not is_new and ws.cell(5, c).value in (None, ""):
+            ws.cell(5, c).value = s["label"]
+            refill += 1
         for sku, q in s["items"].items():
             r = sku_rows.get(sku)
             if r is None:

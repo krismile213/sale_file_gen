@@ -519,6 +519,35 @@ def ensure_day_cols(dry):
     print(f"  合计新增列: {total}")
 
 
+def shift_window(dry):
+    """阶段2.6：日列窗口整体平移到「TO 月的上月 25 日」起（保留 7 天原则的列版落地）。
+
+    2026-11-03 用户方案：不删列、不插列，行5 日期整体平移 + 行1 星期同步 +
+    重折叠（折叠边界=快照日次日）。SUMIFS 引本列 $5，公式文本零改动，
+    数据按新日期从明细自动重算；条件格式/列宽/跨表引用完全不受影响。
+    68 列窗口 ≥ 上月25日~TO月末 跨度，平移后无需补列（2.5 兜底保留）。
+    """
+    ty, tm = int(TO_PERIOD[:4]), int(TO_PERIOD[4:6])
+    pm_y, pm_m = (ty, tm - 1) if tm > 1 else (ty - 1, 12)
+    new_start = date(pm_y, pm_m, 25)
+    snap = date(ty, tm, 1)
+    print(f"\n########## 阶段2.6：日列窗口平移（起点 → {new_start.isoformat()}，折叠自 {snap.isoformat()} 次日）")
+    import shift_daycols_20261103 as SH
+    for wb_cfg in C.WORKBOOKS:
+        f = wb_cfg["file"]
+        p = os.path.join(WORK, f)
+        if not os.path.exists(p):
+            print(f"  {f}: 缺文件!")
+            continue
+        try:
+            n = SH.shift_book(p, apply=not dry, new_start=new_start, snap=snap,
+                              backup_dir=None if dry else BACKUP_MIXED)
+            if n and not dry:
+                print(f"  ✓ {f}: 平移 {n} 个日列日期")
+        except Exception as e:
+            print(f"  {f}: !! 窗口平移失败 {e!r}")
+
+
 # ---------------- 阶段3：校验 ----------------
 
 def _scan_sales_file(p, sheet_name):
@@ -674,7 +703,7 @@ def main():
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--phase", default="all",
-                    choices=["all", "archive", "october", "daycols", "verify"])
+                    choices=["all", "archive", "october", "daycols", "shift", "verify"])
     ap.add_argument("--no-status-fix", action="store_true",
                     help="封存前不做订单状态校正（取消单会留在历史里，日销表偏高约1%%）")
     ap.add_argument("--from", dest="from_period", default="",
@@ -700,6 +729,8 @@ def main():
         build_october(dry)
     if args.phase in ("all", "daycols"):
         ensure_day_cols(dry)
+    if args.phase in ("all", "shift"):
+        shift_window(dry)
     if args.phase in ("all", "verify"):
         verify(dry_run_hint=dry)
     if dry:
