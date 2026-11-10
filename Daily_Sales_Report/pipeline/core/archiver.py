@@ -90,10 +90,19 @@ def archive_day(day=None, work_dir=None, quiet=False, force_overwrite=False):
     dest = os.path.join(work, f"{y}年每日数据", f"{y}年{m}月", day_dir_name(day))
     os.makedirs(dest, exist_ok=True)
 
-    files = sorted(f for f in os.listdir(work)
-                   if f.endswith(".xlsx") and not f.startswith("~$"))
+    # 只归档 config.WORKBOOKS 登记的簿（2026-11-10 修）：
+    # 老逻辑「目录里所有 *.xlsx」会把旁挂文件当簿归档——`商品资料对照-差异清单.xlsx`
+    # （sync_product_master 的导出物）、装箱单等都被复制进「N月N日/M月D日」，
+    # 让月底回溯时多出于虚乌有的「第 15 本」，读者误以为站点表变多了。
+    allowed = {wb["file"] for wb in C.WORKBOOKS}
+    files = sorted(f for f in os.listdir(work) if f in allowed)
+    skipped = sorted(f for f in os.listdir(work)
+                     if f.endswith(".xlsx") and not f.startswith("~$")
+                     and f not in allowed)
+    if skipped and not quiet:
+        print(f"  [归档] 跳过 {len(skipped)} 个非工作簿 xlsx：{', '.join(skipped)}")
     if not files:
-        print(f"  [归档] {work} 下没有 .xlsx，无事可做")
+        print(f"  [归档] {work} 下没有登记在 config.WORKBOOKS 的簿，无事可做")
         return [], []
     ok, fail = [], []
     kept, preserved = [], []
