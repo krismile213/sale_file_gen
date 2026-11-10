@@ -32,12 +32,23 @@
 import argparse
 import datetime
 import hashlib
+import json
 import os
 import re
 import shutil
 import sys
 
 TRUNK_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, TRUNK_DIR)
+
+# ★ 2026-11-10：换月「模板对不对」的自动判据 = 与定案数字登记表对撞。
+#   事故背景：202610 的模板是从「11-05 改 9 月 −38 之前」的版本复制的，把已更正的 9 月
+#   又带回旧值（印尼 9 月 3,988 → 4,026），成品继承模板 ⇒ 恒等链当场断 38 件，而且全程无提示。
+#   现在：`工具-一键跑全链.py` 每期跑完会把定案数字写进 trunk/定案数字.json；
+#   准备模板时拿「复制过来的月销表模板」里**上期那一列**跟登记表对撞，不一致就报冲突。
+FINAL_JSON = os.path.join(TRUNK_DIR, "定案数字.json")
+CHECK_KEYS = ["总计", "亚马逊", "东南亚", "印尼", "菲律宾", "泰国",
+              "欧洲", "英国", "美国", "加拿大", "墨西哥", "美客多"]
 
 # (说明, 目标子目录（相对快照目录，"" = 快照根）, 源 result 子目录, 目标文件名正则/字面量)
 TEMPLATES = [
@@ -91,6 +102,55 @@ def _pick_source(src_dir, pattern):
     return os.path.join(src_dir, hits[0]), None
 
 
+def _load_registry():
+    if not os.path.isfile(FINAL_JSON):
+        return {}
+    try:
+        with open(FINAL_JSON, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:                                        # noqa: BLE001
+        return {}
+
+
+def check_source_numbers(snap_dir, src_period):
+    """模板里「源期那一列」必须等于登记表里的定案数字；返回 (ok, 说明行列表)"""
+    lines = []
+    reg = _load_registry().get(src_period)
+    tpl = os.path.join(snap_dir, "月销售总表.xlsx")
+    if not reg:
+        lines.append(f"ℹ️ 定案数字.json 里没有 {src_period} 的登记（还没跑过一键跑全链？）"
+                     f"→ 跳过对撞，只提醒：源期模板请确认是最新定案版")
+        return True, lines
+    if not os.path.isfile(tpl):
+        lines.append(f"⚠️ 模板月销售总表不存在，跳过定案数字对撞：{tpl}")
+        return True, lines
+    try:
+        from mst_read import totals_or_none
+        tt, why = totals_or_none(tpl, int(src_period[4:]), year=src_period[:4])
+    except Exception as e:                                   # noqa: BLE001
+        tt, why = None, str(e)
+    if tt is None:
+        lines.append(f"⚠️ 模板月销售总表读不出分组列（{why}）→ 跳过定案数字对撞")
+        return True, lines
+
+    bad = []
+    for k in CHECK_KEYS:
+        if k not in reg or k not in tt:
+            continue
+        if abs(tt[k] - reg[k]) > 0.5:
+            bad.append(f"{k}：模板 {tt[k]:.0f} ≠ 定案 {reg[k]}")
+    if bad:
+        lines.append(f"❌ {src_period} 模板与定案数字不一致（登记于 {reg.get('verified_at', '?')}"
+                     f"，快照 {reg.get('snapshot', '?')}）：")
+        for b in bad:
+            lines.append("      " + b)
+        lines.append("   ⇒ 说明源期成品在登记之后又被改过，或这份模板不是最新定案版。"
+                     "请先把源期成品重跑到全绿（工具-一键跑全链.py），再重做模板。")
+        return False, lines
+    lines.append(f"✅ {src_period} 模板 = 定案数字（总计 {reg.get('总计')}，13 项关键口径 0 差）")
+    return True, lines
+
+
 def main():
     ap = argparse.ArgumentParser(description="把上一期成品复制成这一期的四张模板")
     ap.add_argument("period", help="目标数据归属周期 YYYYMM")
@@ -98,6 +158,8 @@ def main():
     ap.add_argument("--src", default=None, help="源期（默认 = 目标期上一月）")
     ap.add_argument("--force", action="store_true", help="目标已存在且内容不同时覆盖")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不落盘")
+    ap.add_argument("--skip-number-check", action="store_true",
+                    help="跳过「模板源期列 vs 定案数字」对撞")
     args = ap.parse_args()
 
     period, snapshot = args.period, args.snapshot
@@ -178,6 +240,13 @@ def main():
         print(f"📁 已确保目录存在：东南亚/跨境/、库龄/{snapshot}/")
 
     print("-" * 78)
+    # ★ 2026-11-10：模板 vs 定案数字对撞（防「复制了改前旧版模板」这种静默回退）
+    if not args.skip_number_check and not args.dry_run:
+        ok_num, lines = check_source_numbers(snap_dir, src_period)
+        for ln in lines:
+            print(ln)
+        if not ok_num:
+            conflict += 1
     tag = "[dry-run] " if args.dry_run else ""
     print(f"{tag}结果：就位 {ok} / 跳过 {skip} / 冲突 {conflict} / 缺失 {miss}")
     if miss or conflict:
@@ -190,7 +259,8 @@ def main():
     print(f"     （东南亚的放 东南亚/、跨境的放 东南亚/跨境/）")
     print(f"  2) 体检： python 工具-换月资料体检.py {period} {snapshot}")
     print(f"  3) 得分列： python 工具-更新商品资料得分列.py --apply")
-    print(f"  4) 依次跑： month_sale_file.py → southeast_asia_sale_file.py → europe_sale_file.py → north_america_sale_file.py")
+    print(f"  4) 一条命令跑全链（含合并欧盟英国报告 + 全链断言 + 定案数字落盘）：")
+    print(f"     python 工具-一键跑全链.py {period} {snapshot}")
     return 0
 
 

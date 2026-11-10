@@ -80,6 +80,9 @@ ODS 原始数据层
 #        永远差跨月单+事后修正件；改为优先直取本表「{Y}年」sheet 对应站点块逐 SKU 值，
 #        月销总表缺站点/未生成时自动回落老路径。当前簿一次性对齐由
 #        pipeline/tools/maintenance/apply_msx_to_current_20261103.py 执行。
+#  ㉕    一键跑全链（5 步 + 23 项断言 + 定案数字落盘）        2026-11-10   —                 工具-一键跑全链.py               是，跑批入口（漏步=错数）
+#  ㉖    源数据层补充订单 + 非亚马逊渠道报告区间体检           2026-11-10   380~470           merge_supplement_orders /        是，跨月单丢失 / 导错月份静默
+#        （详见 audit_channel_spans + <快照>/东南亚/补充订单/README-补充订单.md；替代 apply_yfdz_*.py）      audit_channel_spans
 #  附   菲律宾新订单报告「以一敌多」接入（**默认开**）        2026-10-09   707~842 / 1669~1673  USE_PH_NEW_ORDER_REPORT         是，菲整列口径
 #       ★2026-11-02 起默认 True（`PH_NEW_REPORT=0` 可回退）；同时**跳过 KSON 线下报告**（1795~1812）避免手工单双计
 #  附   Shopee 跨境**台湾站**并入「虾皮境内」（含取消单剔除）  2026-11-02   433~443 / 1254/1273/1826  台湾 / other_shopee_cross_site / se_asia_sites   是，东南亚少 6 件
@@ -285,6 +288,62 @@ def resolve_report_path(dir_path: str, file_name: str) -> str:
 # 2026-11-10：亚马逊报告「月份区间」体检的告警收集器（见 get_belonging_amazon_order_df 末尾）
 AMZ_SANITY_WARNINGS = []
 
+# 2026-11-10：**非亚马逊**渠道（Shopee/Lazada/Tiktok/京东/eMAG/TEMU/美客多/线下）报告区间体检
+REPORT_SANITY_WARNINGS = []
+
+
+def audit_channel_spans(order_df:pd.DataFrame, tag:str, belonging_date:str,
+                        min_rows:int=30)->list:
+    """按 (实体, 平台, 站点) 体检一份渠道订单数据的日期覆盖，返回告警文本列表。
+
+    为什么要单独做一遍：亚马逊有「本地月份过滤」（任务㉑）兜底，导错月份会在那里被拦下；
+    而 Shopee / Lazada / Tiktok / 京东 / eMAG / TEMU / 美客多 / 线下 这些渠道**完全没有月份过滤**
+    ⇒ 导错月份时的表现是：日志一句提示都没有，数字静静地变多或变少（interflow 北美那次
+    就是同类事故，只是恰好落在亚马逊分支上）。
+    判据（只看形状，不改任何数字）：
+      · 归属月占比 = 0 或 < 50%   → 【严重】整份报告看起来不是本期的
+      · 50% ≤ 占比 < 90%          → 【提醒】报告里混着上/下月单（滚动窗口导出的渠道属正常）
+      · 覆盖天数 < 当月天数 − 3   → 【提醒】报告可能截断（只导了半个月）
+    """
+    out = []
+    if order_df is None or len(order_df) == 0:
+        return out
+    if "下单时间" not in order_df.columns:
+        return out
+    start = pd.Timestamp(int(belonging_date[:4]), int(belonging_date[4:6]), 1)
+    end = start + pd.DateOffset(months=1)
+    days = start.days_in_month
+    keys = [c for c in ("实体", "平台", "站点") if c in order_df.columns]
+    if not keys:
+        keys = ["平台"] if "平台" in order_df.columns else None
+    grouped = order_df.groupby(keys, dropna=False) if keys else [("全部", order_df)]
+    for key, g in grouped:
+        if len(g) < min_rows:
+            continue                     # 小渠道（如台湾 5 单）噪声大，不体检
+        d = pd.to_datetime(g["下单时间"], errors="coerce")
+        ok_d = d.notna()
+        if not ok_d.any():
+            continue
+        n = int(ok_d.sum())
+        share = float(((d >= start) & (d < end)).sum()) / n
+        span = int((d.max() - d.min()).days) + 1
+        name = "/".join(str(k) for k in (key if isinstance(key, tuple) else (key,)))
+        dist = d.dt.strftime("%Y%m").value_counts().to_dict()
+        if share < 0.5:
+            out.append(f"【严重·报告区间】{tag} {name}：{n} 行里只有 {share:.1%} 属于 "
+                       f"{belonging_date}（实际月份分布 {dist}）—— 这份报告很可能导错月份区间")
+        elif share < 0.9:
+            out.append(f"【提醒·报告区间】{tag} {name}：{n} 行里 {1 - share:.1%} 不属于 "
+                       f"{belonging_date}（分布 {dist}）—— 滚动窗口导出的渠道属正常，否则请核对")
+        if span < days - 3:
+            out.append(f"【提醒·报告区间】{tag} {name}：日期只覆盖 {span} 天（{d.min():%Y-%m-%d}~"
+                       f"{d.max():%Y-%m-%d}，当月 {days} 天）—— 可能截断")
+    for w in out:
+        print(w)
+        REPORT_SANITY_WARNINGS.append(w)
+    return out
+
+
 
 def get_belonging_amazon_order_df(entity:str, sale_group:str, belonging_date:str, snapshot_date:str)-> pd.DataFrame:
     dir_path = os.path.join("data","数据归属周期",belonging_date,"快照日期",snapshot_date)
@@ -390,6 +449,54 @@ def se_a_dir(dir_path:str, *sub:str)-> str:
         return nested
     flat = os.sep.join([dir_path] + list(sub))
     return flat if os.path.exists(flat) or not sub else nested
+
+
+# ===== 2026-11-10 新增：补充订单（源数据层补录，替代「跑完再改成品」）=====
+# 背景：印尼线下单 YFDZ-20260924-001（8 SKU / 38 件）源报告日期是 9-24，但业务要求计进 10 月。
+#   旧做法 = 跑完月销表后跑 apply_yfdz_*.py 改写成品，再在东南亚表里二次注入 —— 重跑必丢、
+#   且三处（月销表 / 东南亚表 / 订单明细）容易不同步。
+# 新做法 = 把该单的**原始报告行**原样放进快照目录的「补充订单」文件夹，读报告时直接 concat：
+#   月销表、东南亚销量表、订单明细 sheet 全部同源，重跑天然幂等。
+# 约定
+#   · 位置：<快照日>/[东南亚/]补充订单/<渠道标签>补充订单<期>.xlsx
+#   · 列结构：与被补的渠道报告**完全一致**（直接复制原始行，不改名、不派生新列）
+#   · 幂等：按 key_col（订单号）去重 —— 主报告里已有的订单号不再补，重复跑不会叠加
+#   · 停用：文件名里带 `_disabled` 即忽略
+SUPPLEMENT_LOG = []
+
+
+def merge_supplement_orders(order_df:pd.DataFrame, folder:str, tag:str, key_col:str)-> pd.DataFrame:
+    """把 folder 下匹配 tag 的补录文件按 key_col 去重后并入 order_df（并入前后列结构一致）"""
+    if not folder or not os.path.isdir(folder):
+        return order_df
+    files = sorted(f for f in os.listdir(folder)
+                   if f.lower().endswith(".xlsx") and not f.startswith("~$")
+                   and "_disabled" not in f and tag in f)
+    if not files:
+        return order_df
+    if key_col not in order_df.columns:
+        raise KeyError(f"补充订单并入失败：主报告里没有订单号列「{key_col}」"
+                       f"（现有列：{list(order_df.columns)[:8]}…）")
+    base_keys = set(order_df[key_col].astype(str).str.strip())
+    add_frames = []
+    for f in files:
+        p = os.path.join(folder, f)
+        sup = pd.read_excel(p)
+        if key_col not in sup.columns:
+            raise KeyError(f"补充订单文件 {f} 缺少订单号列「{key_col}」"
+                           f"（现有列：{list(sup.columns)[:8]}…）")
+        keys = sup[key_col].astype(str).str.strip()
+        dup = keys.isin(base_keys)
+        new = sup[~dup].reindex(columns=order_df.columns)
+        print(f"【补充订单】{tag}：{f} 共 {len(sup)} 行，主报告已有 {int(dup.sum())} 行"
+              f" → 实补 {len(new)} 行" + ("（幂等跳过，不会重复计入）" if dup.any() else ""))
+        if len(new):
+            add_frames.append(new)
+            base_keys |= set(keys[~dup])
+            SUPPLEMENT_LOG.append((tag, f, int(len(new))))
+    if not add_frames:
+        return order_df
+    return pd.concat([order_df] + add_frames, ignore_index=True)
 
 
 def get_belonging_shopee_order_df(entity:str, sale_group:str, belonging_date:str, snapshot_date:str)-> pd.DataFrame:
@@ -950,6 +1057,10 @@ def get_belonging_indonesia_warehouse_offline_order_df(entity:str, sale_group:st
     file_name = f"{sale_group}海外仓{belonging_date}订单报告.xlsx"
     file_path = se_a_dir(dir_path, file_name)
     order_df = pd.read_excel(file_path)
+    # ★ 2026-11-10：源数据层补录（如 YFDZ-20260924-001 跨月单）——必须在改名/过滤之前并入，
+    #   这样后面的 rename / YFDZ+OUTER 过滤 / 渠道键赋值全部一视同仁，不会漏字段。
+    order_df = merge_supplement_orders(order_df, se_a_dir(dir_path, "补充订单"),
+                                       "印尼海外仓", "订单号\nOrder No.")
     order_df["实体"] = "本土"
     order_df["平台"] = "线下"
     order_df["仓库"] = "印尼海外仓"
@@ -972,6 +1083,10 @@ def get_belonging_indonesia_warehouse_offline_order_df(entity:str, sale_group:st
     order_df = order_df.rename(columns={quantity_col:"数量"})
 
     order_df = order_df.rename(columns={"SKU":"sku"})
+    # ★ 2026-11-10：把「订单类型」也带出来 —— 只服务于「国家订单明细」sheet 的展示列，
+    #   不参与任何聚合。不带的话线下渠道那一列在明细里会是空的（业务靠它区分手工单/普通单）。
+    if "订单类型\nOrder Type" in order_df.columns and "订单类型" not in order_df.columns:
+        order_df = order_df.rename(columns={"订单类型\nOrder Type": "订单类型"})
     #只获取线下订单
     #线下单 = 手动导入的订单，单号以 YFDZ 开头（等价于原「订单来源 == MANUAL(手动导入)」，但不受来源分类改名影响）
     # ⚠️ 9.15 该表右侧另有业务维护的「上马系统状态 + 0/1」字典（PICKING/PACKED/OUTER/WH_REVIEW/
@@ -1720,9 +1835,10 @@ if __name__ == "__main__":
         os.chdir(_TRUNK_DIR)
     need_type_check = True
     # 2026-11-03：支持环境变量覆盖期别/快照（补算历史期用，如 MSF_PERIOD=202609 MSF_SNAPSHOT=20261006）；
-    # 不设置时行为与原来完全一致。
+    # 不设置时走下面的默认值。★ 2026-11-10：默认快照已跟到本期 20261107（原来停在 20261102，
+    # 忘了传 env 就会静默用旧快照，和欧洲/北美脚本的 L35 常量对不上）。
     belonging_date = os.environ.get("MSF_PERIOD", "202610")
-    snapshot_date = os.environ.get("MSF_SNAPSHOT", "20261102")
+    snapshot_date = os.environ.get("MSF_SNAPSHOT", "20261107")
     # 得分列名。None = 自动探测（2026-10-16 新增：数据部只有一人后，不再"等别人改这行"）：
     # 规律 = 归属月的上一个月（202609 用「8月销量得分」），探测块见下方商品资料读取后。
     # 仍可写死列名（如 "8月销量得分"）覆盖自动探测。
@@ -1913,6 +2029,8 @@ if __name__ == "__main__":
     for sale_group in southeast_asia_cross_lazada_salegroup:
         lazada_se_a_order_df = get_belonging_lazada_order_df(entity, sale_group,belonging_date, snapshot_date)
         total_last30d_se_a_order_df = pd.concat([total_last30d_se_a_order_df, lazada_se_a_order_df])
+    # 2026-11-10：非亚马逊渠道报告区间体检（只看形状，不改数字；命中会在末尾汇总再打一次）
+    audit_channel_spans(total_last30d_se_a_order_df, "东南亚各渠道", belonging_date)
     #汇总东南亚销量表
     se_a_sku_sale_df = total_last30d_se_a_order_df.groupby(by=["实体", "平台", "仓库", "站点", "sku"], dropna=False)["数量"].sum().reset_index()
     # groupby聚合后的销量列名随pandas版本而异（旧版为"数量dropna"，新版为"数量"），两种都兼容
@@ -1949,6 +2067,8 @@ if __name__ == "__main__":
 
     mercado_order_df = get_belonging_mercado_order_df(entity, "美客多", belonging_date, snapshot_date)
     total_last30d_other_order_df = pd.concat([total_last30d_other_order_df, mercado_order_df])
+    # 2026-11-10：非亚马逊渠道报告区间体检（京东 / eMAG / TEMU / 美客多）
+    audit_channel_spans(total_last30d_other_order_df, "其他渠道", belonging_date)
     #汇总其他销量表
     other_sku_sale_df = total_last30d_other_order_df.groupby(by=["实体", "平台", "仓库", "站点", "sku"], dropna=False)["数量"].sum().reset_index()
     other_sku_sale_df = other_sku_sale_df.rename(columns={"数量":f"{cur_acct_cycle_date.strftime('%Y%m')}销量"})
@@ -2326,6 +2446,17 @@ if __name__ == "__main__":
         for _w in AMZ_SANITY_WARNINGS:
             print("   " + _w)
         print("=" * 70)
+    if REPORT_SANITY_WARNINGS:
+        _sev = [w for w in REPORT_SANITY_WARNINGS if w.startswith("【严重")]
+        print("\n" + "=" * 70)
+        print(f"{'🚨' if _sev else '⚠️'} 非亚马逊渠道报告区间体检：{len(REPORT_SANITY_WARNINGS)} 条"
+              f"（其中严重 {len(_sev)} 条）")
+        for _w in REPORT_SANITY_WARNINGS:
+            print("   " + _w)
+        print("=" * 70)
+    if SUPPLEMENT_LOG:
+        print("\n【补充订单】本次共并入 "
+              + "、".join(f"{t}({f} → {n} 行)" for t, f, n in SUPPLEMENT_LOG))
 
     print(f"✅ 结果文件（成品，注意不是data目录下的模板）: {os.path.abspath(result_path)}")
     # os.startfile(result_path)  # 202609 期：无人值守跑，先注释掉（跑完自动弹窗会占住成品，导致下轮保存失败）

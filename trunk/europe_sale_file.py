@@ -31,9 +31,11 @@ from openpyxl.styles.differential import DifferentialStyle
 from wps_fidelity import apply_fidelity, check_fidelity
 
 # ==================== 月度参数（每月只改这三行） ====================
-belonging_date = "202610"      # 数据归属周期 YYYYMM
-snapshot_date = "20261107"     # 快照日期 YYYYMMDD
-month_offset = 10              # 当月月份 1~12
+# ★ 2026-11-10：支持环境变量覆盖（工具-一键跑全链.py / 手工 MSF_PERIOD=… 传参），
+#   默认值仍是本期常量，单独跑脚本的行为与历史完全一致。
+belonging_date = os.environ.get("MSF_PERIOD") or "202610"      # 数据归属周期 YYYYMM
+snapshot_date = os.environ.get("MSF_SNAPSHOT") or "20261107"   # 快照日期 YYYYMMDD
+month_offset = int(belonging_date[4:])                         # 当月月份 1~12（由期别推导，杜绝两处不一致）
 AUTO_OPEN = False              # 跑完是否自动打开成品
 # ===================================================================
 
@@ -99,6 +101,28 @@ EXPECT = {          # ★ 202610 实测值（10 月，20261107 快照 + 欧盟�
     "荷兰": 771, "波兰": 292, "瑞典": 610, "爱尔兰": 943, "英国": 6494,
 }
 EXPECT_TOTAL = 31037  # ★ = 主表「欧洲」24543 + 「英国」6494（0 = 不硬断言）
+
+# ---------------- [0] 交叉校验基线：EXPECT 从本期月销总表读（2026-11-10 新增） ----------------
+# 以前 EXPECT 靠「上期实测手工回填」，回填错了 / 忘了回填都只有自己知道。
+# 现在改成**真交叉校验**：欧洲表 9 国合计必须 == 月销总表【{YEAR}年】「欧洲」列；
+# 英国必须 == 「英国」列。两边是不同产物（本脚本读 CSV，月销表是主脚本写出），对得上才算通过。
+# 月销表还没跑 / 列结构变了 → 退回写死值并大声告警（与历史行为一致，不阻断）。
+EXPECT_GROUP = {}
+try:
+    from mst_read import totals_or_none as _mst_totals
+    _mst, _why = _mst_totals(main_path, month_offset, year=YEAR)
+except Exception as _e:                                   # noqa: BLE001
+    _mst, _why = None, f"{type(_e).__name__}: {_e}"
+if _mst:
+    EXPECT_GROUP = {"九国": _mst["欧洲"], "英国": _mst["英国"]}
+    _gt = EXPECT_GROUP["九国"] + EXPECT_GROUP["英国"]
+    print(f"[0] 交叉校验基线（月销总表 {month_offset} 月）：九国 {EXPECT_GROUP['九国']:.0f} + 英国 "
+          f"{EXPECT_GROUP['英国']:.0f} = {_gt:.0f}"
+          + ("" if not EXPECT_TOTAL or abs(_gt - EXPECT_TOTAL) < 0.5
+             else f"  ⚠️ 与脚本写死的 {EXPECT_TOTAL} 不一致 → 以月销总表为准"))
+    EXPECT_TOTAL = int(round(_gt))
+else:
+    print(f"[0] ⚠️ 未能从月销总表取到基线（{_why}）→ 仅按脚本写死的 EXPECT 校验")
 
 # ---------------- 读渠道销量 ----------------
 df = pd.read_csv(os.path.join(tmp_dir, "total_sku_sale_df.csv"), dtype=str)
@@ -381,6 +405,20 @@ for cn, tot, na in log:
 print("-" * 64)
 print(f"  {n} 国合计 {gtot}  | 期望 {EXPECT_TOTAL} {'✅' if gtot == EXPECT_TOTAL else '❌'}")
 assert EXPECT_TOTAL == 0 or gtot == EXPECT_TOTAL, f"欧洲 {month_offset} 月合计 {gtot} ≠ {EXPECT_TOTAL}"
+# ★ 2026-11-10：分组级交叉校验（月销总表为权威）
+if EXPECT_GROUP:
+    _by_cn = {cn: tot for cn, tot, _na in log}
+    _eu9 = sum(v for cn, v in _by_cn.items() if cn != "英国")
+    _uk = _by_cn.get("英国", 0)
+    _bad = []
+    if abs(_eu9 - EXPECT_GROUP["九国"]) > 0.5:
+        _bad.append(f"九国 {_eu9} ≠ 月销表欧洲列 {EXPECT_GROUP['九国']:.0f}")
+    if abs(_uk - EXPECT_GROUP["英国"]) > 0.5:
+        _bad.append(f"英国 {_uk} ≠ 月销表英国列 {EXPECT_GROUP['英国']:.0f}")
+    print(f"  交叉校验（月销总表）九国 {_eu9} / 英国 {_uk} "
+          + ("✅ 全部一致" if not _bad else "❌ " + "；".join(_bad)))
+    assert not _bad, ("欧洲表与月销总表不一致 → " + "；".join(_bad)
+                      + "。请确认主脚本已用同一快照重跑，且欧盟/英国报告已合并")
 print(f"✅ 已写入 {result_path}")
 print(f"✅ 交付件 {n} 份 → {result_dir}")
 _lines, _ok = check_fidelity(result_path)

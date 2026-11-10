@@ -34,9 +34,11 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # ==================== 月度参数（每月只改这三行） ====================
-belonging_date = "202610"      # 数据归属周期 YYYYMM
-snapshot_date = "20261107"     # 快照日期 YYYYMMDD
-month_offset = 10              # 当月月份 1~12
+# ★ 2026-11-10：支持环境变量覆盖（工具-一键跑全链.py / 手工 MSF_PERIOD=… 传参），
+#   默认值仍是本期常量，单独跑脚本的行为与历史完全一致。
+belonging_date = os.environ.get("MSF_PERIOD") or "202610"      # 数据归属周期 YYYYMM
+snapshot_date = os.environ.get("MSF_SNAPSHOT") or "20261107"   # 快照日期 YYYYMMDD
+month_offset = int(belonging_date[4:])                         # 当月月份 1~12（由期别推导）
 # ===================================================================
 
 cur_acct_cycle_date = datetime.datetime.strptime(belonging_date, "%Y%m").date()
@@ -223,45 +225,31 @@ sale_df["sku"] = sale_df["sku"].astype(str).str.strip()
 SE_A_SITES = ["菲律宾", "泰国", "印尼", "新加坡", "马来西亚", "越南", "台湾"]
 se_df = sale_df[sale_df["站点"].isin(SE_A_SITES)].copy()
 
-# ★ 2026-11-07 新增：印尼线下单 YFDZ-20260924-001 跨月更正（38 件 9月→10月）
-# 该单实际发货在 10 月，源报告归属 9 月：9 月已从明细剔除，10 月须按 SKU 补回线下渠道。
-# 只注入**本期（10 月）** 的 se_df，9 月块走模板继承（模板 9 月已剔过 38 件）。
-# ⚠️ 幂等判据：以「月销总表印尼列与本表印尼合计是否已相等」为准——若主脚本月值已含、
-#    而本表还差 38，就补一次；补齐后两端相等，重跑不会再叠加。
-# ⚠️ 源报告位置：YFDZ 单在 **202609 期** 的线下报告里（10 月报告里没有它），故路径按 202609 硬指。
+# ★ 2026-11-10：印尼线下单 YFDZ-20260924-001（38 件）的跨月更正**已下移到源数据层**，
+#   本段不再手工注入。原做法（在本表注入 + 另跑 apply_yfdz_*.py 改写月销表）有三个问题：
+#     ① 一重跑月销表就丢 38，必须记得手工重放；② 只改合计层会让渠道列与合计列对不上；
+#     ③ 明细 sheet 要单独补行。现在改成：把该单的**原始报告行**放成一个补录文件，
+#       由 month_sale_file.py 的 merge_supplement_orders() 在「读报告时」并入 ——
+#       月销表 / 本表 / 订单明细 sheet 三处自动同源，重跑天然幂等。
+#   补录文件：data/数据归属周期/<期>/快照日期/<快照日>/东南亚/补充订单/印尼海外仓补充订单<期>.xlsx
+#   这里只留一个**只读探针**：中间产物里必须能看到这 38 件，否则说明补录没生效（会少 38 件）。
 YFDZ_ORDER_NO = "YFDZ-20260924-001"
-YFDZ_SRC = os.path.join(trunk_dir, "data", "数据归属周期", "202609", "快照日期", "20261006",
-                        "东南亚", "印尼海外仓202609订单报告.xlsx")
-if month_offset == 10 and os.path.exists(YFDZ_SRC):
-    _off_df = pd.read_excel(YFDZ_SRC)
-    # ★ 列名带换行（「商品编码\nGoods No」），必须按前缀匹配
-    _sku_c = next(c for c in _off_df.columns if str(c).startswith("商品编码"))
-    _qty_c = next(c for c in _off_df.columns if str(c).startswith("商品数量"))
-    _ord_c = next(c for c in _off_df.columns if str(c).startswith("订单号"))
-    _yfdz_rows = _off_df[_off_df[_ord_c].astype(str).str.contains(YFDZ_ORDER_NO, na=False)]
-    _yfdz_map = (_yfdz_rows.groupby(_yfdz_rows[_sku_c].astype(str).str.strip())[_qty_c]
-                 .sum().astype(int).to_dict())
-    assert len(_yfdz_map) == 8 and sum(_yfdz_map.values()) == 38, \
-        f"YFDZ 明细异常：{_yfdz_map} = {sum(_yfdz_map.values())}"
-    _cur_idn = float(se_df[(se_df["站点"] == "印尼")][sale_col].sum())
-    _add = pd.DataFrame([{"实体": "本土", "平台": "线下", "站点": "印尼", "sku": _s,
-                          sale_col: float(_q)} for _s, _q in _yfdz_map.items()])
-    se_df = pd.concat([se_df, _add], ignore_index=True)
-    # 同步构造明细行（供 [5.6] 订单明细 sheet 与件数对撞用；状态按原报告取）
-    _st_c = next(c for c in _off_df.columns if str(c).startswith("订单状态"))
-    _ot_c = next(c for c in _off_df.columns if str(c).startswith("订单类型"))
-    _wh_c = next(c for c in _off_df.columns if str(c).startswith("仓库名称"))
-    _tm_c = next(c for c in _off_df.columns if str(c).startswith("订单时间"))
-    YFDZ_DETAIL_ROWS = pd.DataFrame([{
-        "订单号": YFDZ_ORDER_NO, "实体": "本土", "平台": "线下",
-        "仓库": str(_r[_wh_c]), "站点": "印尼", "sku": str(_r[_sku_c]).strip(),
-        "数量": float(_r[_qty_c]), "下单时间": _r[_tm_c],
-        "订单状态": str(_r[_st_c]), "订单类型": str(_r[_ot_c]),
-    } for _, _r in _yfdz_rows.iterrows()])
-    print(f"\n[1.5] 印尼线下单 {YFDZ_ORDER_NO} 跨月更正：{len(_yfdz_map)} SKU / 38 件"
-          f" 已注入 10 月线下渠道（注入前印尼 {_cur_idn:.0f} → {_cur_idn + 38:.0f}）")
-else:
-    YFDZ_DETAIL_ROWS = None
+YFDZ_EXPECT_QTY = 38
+YFDZ_DETAIL_ROWS = None          # 兼容 [5.6]：明细行现在由中间产物直接带来，无需额外构造
+if month_offset == 10:
+    _det_probe = os.path.join(tmp_dir, "se_a_order_detail_df.csv")
+    if os.path.isfile(_det_probe):
+        _dp = pd.read_csv(_det_probe, dtype=str)
+        if "订单号" in _dp.columns:
+            _hit = _dp[_dp["订单号"].astype(str).str.contains(YFDZ_ORDER_NO, na=False)]
+            _q = float(pd.to_numeric(_hit["数量"], errors="coerce").sum()) if len(_hit) else 0.0
+            if abs(_q - YFDZ_EXPECT_QTY) < 1e-6:
+                print(f"\n[1.5] 印尼线下单 {YFDZ_ORDER_NO}：中间产物已含 {_q:.0f} 件"
+                      f"（源数据层「补充订单」生效）✅")
+            else:
+                print(f"\n[1.5] ⚠️ 印尼线下单 {YFDZ_ORDER_NO} 在中间产物里只有 {_q:.0f} 件"
+                      f"（应为 {YFDZ_EXPECT_QTY}）——10 月印尼会少"
+                      f" {YFDZ_EXPECT_QTY - _q:.0f} 件。请检查快照目录下 东南亚/补充订单/ 是否还在")
 
 se_total = float(se_df[sale_col].sum())
 print(f"\n[1] 渠道级销量：{len(sale_df)} 行，东南亚 6 站合计 = {se_total:.0f}")
@@ -738,7 +726,8 @@ def build_order_detail_sheets():
               f"（请用新版 month_sale_file.py 重跑一次）")
         return {}
     det = pd.read_csv(ORDER_DETAIL_CSV, dtype={"订单号": str, "sku": str})
-    # ★ 2026-11-07：把 [1.5] 注入的 YFDZ 跨月更正行补进明细（否则明细件数会比销量表少 38）
+    # ★ 2026-11-10：YFDZ 补录行不再单独构造——它已由源数据层「补充订单」并入中间产物，
+    #   det 自然包含；YFDZ_DETAIL_ROWS 保留为 None 仅为兼容旧分支（此处不再触发）。
     if YFDZ_DETAIL_ROWS is not None:
         det = pd.concat([det, YFDZ_DETAIL_ROWS], ignore_index=True)
     for c in ("实体", "平台", "站点", "仓库", "订单状态", "订单类型"):
@@ -832,9 +821,11 @@ for _cty, _q in detail_totals.items():
         raise AssertionError(f"【订单明细·{_cty}】明细件数 {_q} ≠ 国家 sheet 月合计 {_sheet_total}")
     print(f"    ✅ 对撞：{_cty} 明细件数 {_q:.0f} = 国家 sheet 月合计 {_sheet_total:.0f}")
 
-# ---------------- 5.7 （预留）----------------
-# 印尼线下单 YFDZ 的跨月更正已上移到 [1.5] 段（在渠道级 se_df 注入），
-# 这样 [3] 写块 / [4] SEA Total / [5] 校验 自然全部一致，无需在这里二次修正。
+# ---------------- 5.7 （已归档，无代码）----------------
+# 印尼线下单 YFDZ 的跨月更正原来在这里做合计层修补（判据 `if _shopee_v >= _off_v`，
+# 与实测 54 < 136 矛盾 ⇒ 从来没生效过）。2026-11-07 挪到渠道级注入，2026-11-10 再下移到
+# **源数据层补录**（month_sale_file.merge_supplement_orders）——
+# 现在 [1] 渠道级明细、[3] 写块、[4] SEA Total、[5] 校验、[5.6] 明细 sheet 天然同源一致。
 
 # ---------------- 6. 保存主表 ----------------
 try:

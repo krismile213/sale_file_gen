@@ -31,9 +31,11 @@ from openpyxl.styles.differential import DifferentialStyle
 from wps_fidelity import apply_fidelity, check_fidelity
 
 # ==================== 月度参数（每月只改这三行） ====================
-belonging_date = "202610"      # 数据归属周期 YYYYMM
-snapshot_date = "20261107"     # 快照日期 YYYYMMDD
-month_offset = 10              # 当月月份 1~12
+# ★ 2026-11-10：支持环境变量覆盖（工具-一键跑全链.py / 手工 MSF_PERIOD=… 传参），
+#   默认值仍是本期常量，单独跑脚本的行为与历史完全一致。
+belonging_date = os.environ.get("MSF_PERIOD") or "202610"      # 数据归属周期 YYYYMM
+snapshot_date = os.environ.get("MSF_SNAPSHOT") or "20261107"   # 快照日期 YYYYMMDD
+month_offset = int(belonging_date[4:])                         # 当月月份 1~12（由期别推导，杜绝两处不一致）
 AUTO_OPEN = False              # 跑完是否自动打开成品
 # ===================================================================
 
@@ -91,6 +93,32 @@ EXPECT = {          # ★ 202610 实测值（10 月，20261107 快照）；换�
     "墨西哥": 3322,    # 主表「墨西哥」1403 + 「美客多」1919
 }
 EXPECT_TOTAL = 10176  # ★ = 5185 + 1669 + 3322（0 = 不硬断言）
+
+# ---------------- [0] 交叉校验基线：EXPECT 从本期月销总表读（2026-11-10 新增） ----------------
+# 口径映射（与本脚本 COUNTRIES 一一对应）：
+#   美国   = 月销表「美国」+「TEMU」      加拿大 = 月销表「加拿大」
+#   墨西哥 = 月销表「墨西哥」+「美客多」   ← 业务 2026-09-19 拍板：墨西哥仓并入墨西哥
+# 月销表读不到 → 退回写死值并告警（不阻断）。
+EXPECT_GROUP = {}
+try:
+    from mst_read import totals_or_none as _mst_totals
+    _mst, _why = _mst_totals(main_path, month_offset, year=YEAR)
+except Exception as _e:                                   # noqa: BLE001
+    _mst, _why = None, f"{type(_e).__name__}: {_e}"
+if _mst:
+    EXPECT_GROUP = {
+        "美国": _mst["美国"] + _mst["TEMU"],
+        "加拿大": _mst["加拿大"],
+        "墨西哥": _mst["墨西哥"] + _mst["美客多"],
+    }
+    _gt = sum(EXPECT_GROUP.values())
+    print(f"[0] 交叉校验基线（月销总表 {month_offset} 月）："
+          + " / ".join(f"{k} {v:.0f}" for k, v in EXPECT_GROUP.items()) + f" = {_gt:.0f}"
+          + ("" if not EXPECT_TOTAL or abs(_gt - EXPECT_TOTAL) < 0.5
+             else f"  ⚠️ 与脚本写死的 {EXPECT_TOTAL} 不一致 → 以月销总表为准"))
+    EXPECT_TOTAL = int(round(_gt))
+else:
+    print(f"[0] ⚠️ 未能从月销总表取到基线（{_why}）→ 仅按脚本写死的 EXPECT 校验")
 
 # ---------------- 读渠道销量 ----------------
 df = pd.read_csv(os.path.join(tmp_dir, "total_sku_sale_df.csv"), dtype=str)
@@ -373,6 +401,16 @@ for cn, tot, na in log:
 print("-" * 64)
 print(f"  {n} 国合计 {gtot}  | 期望 {EXPECT_TOTAL} {'✅' if gtot == EXPECT_TOTAL else '❌'}")
 assert EXPECT_TOTAL == 0 or gtot == EXPECT_TOTAL, f"北美 {month_offset} 月合计 {gtot} ≠ {EXPECT_TOTAL}"
+# ★ 2026-11-10：分组级交叉校验（月销总表为权威）
+if EXPECT_GROUP:
+    _by_cn = {cn: tot for cn, tot, _na in log}
+    _bad = [f"{cn} {_by_cn.get(cn, 0)} ≠ 月销表 {exp:.0f}"
+            for cn, exp in EXPECT_GROUP.items() if abs(_by_cn.get(cn, 0) - exp) > 0.5]
+    print("  交叉校验（月销总表）"
+          + " / ".join(f"{cn} {_by_cn.get(cn, 0)}" for cn in EXPECT_GROUP)
+          + ("  ✅ 全部一致" if not _bad else "  ❌ " + "；".join(_bad)))
+    assert not _bad, ("北美表与月销总表不一致 → " + "；".join(_bad)
+                      + "。请确认主脚本已用同一快照重跑")
 print(f"✅ 已写入 {result_path}")
 print(f"✅ 交付件 {n} 份 → {result_dir}")
 _lines, _ok = check_fidelity(result_path)
