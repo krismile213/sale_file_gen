@@ -282,6 +282,10 @@ def resolve_report_path(dir_path: str, file_name: str) -> str:
     raise FileNotFoundError(f"找不到报表【{file_name}】{hint}")
 
 
+# 2026-11-10：亚马逊报告「月份区间」体检的告警收集器（见 get_belonging_amazon_order_df 末尾）
+AMZ_SANITY_WARNINGS = []
+
+
 def get_belonging_amazon_order_df(entity:str, sale_group:str, belonging_date:str, snapshot_date:str)-> pd.DataFrame:
     dir_path = os.path.join("data","数据归属周期",belonging_date,"快照日期",snapshot_date)
     if entity == "巨川":
@@ -343,11 +347,37 @@ def get_belonging_amazon_order_df(entity:str, sale_group:str, belonging_date:str
     _bel_start = pd.Timestamp(int(belonging_date[:4]), int(belonging_date[4:6]), 1)
     _bel_end_excl = _bel_start + pd.DateOffset(months=1)
     _rows_before_filter = len(order_df)
+    _pre_month_dist = order_df["purchase-date-local"].dt.strftime("%Y%m").value_counts()
     order_df = order_df[(order_df["purchase-date-local"] >= _bel_start)
                         & (order_df["purchase-date-local"] < _bel_end_excl)].copy()
     _rows_dropped = _rows_before_filter - len(order_df)
     if _rows_dropped > 0:
         print(f"【任务㉑·本地月份过滤】{entity}/{sale_group}：剔除本地下单月≠{belonging_date} 的订单 {_rows_dropped} 行（上月尾单，不进本期月销表）")
+
+    # ===== 2026-11-10 新增：报告「月份区间」体检（防静默丢单）=====
+    # 事故：20261107 快照的 interflow北美站点202610订单报告.txt 被误导出成 2026-11-01~11-07
+    #   （213 行），月份过滤把 197 行当「上月尾单」剔掉、只留 16 行（保留率 7.5%），
+    #   日志看着一切正常 ⇒ 静默丢 809 件、总计从 64,007 掉到 63,198。
+    # ⇒ 两道体检：①过滤后保留率 ②归属月订单在报告中的占比。
+    #   超阈值打【严重】，极端情况（保留率<30% 或 归属月占比<10%）直接中断，避免带病出数。
+    #   紧急放行：环境变量 MSF_ALLOW_LOW_COVER=1。
+    _allow_low = os.environ.get("MSF_ALLOW_LOW_COVER", "") == "1"
+    if _rows_before_filter >= 20:
+        _keep_ratio = len(order_df) / _rows_before_filter
+        _bel_share = _pre_month_dist.get(belonging_date, 0) / _rows_before_filter
+        _dist_txt = ", ".join(f"{k}:{v}" for k, v in sorted(_pre_month_dist.items()))
+        _severe = []
+        if _keep_ratio < 0.5:
+            _severe.append(f"保留率仅 {_keep_ratio:.1%}（{_rows_before_filter} 行只剩 {len(order_df)} 行）")
+        if _bel_share < 0.5:
+            _severe.append(f"归属 {belonging_date} 的订单只占 {_bel_share:.1%}（实际月份分布 {_dist_txt}）")
+        if _severe:
+            _msg = (f"【严重·任务㉑】{entity}/{sale_group} 报告疑似导错月份区间："
+                    + "；".join(_severe) + f" ——请核对 {file_name} 的导出起止日期")
+            print(_msg)
+            AMZ_SANITY_WARNINGS.append(_msg)
+            if not _allow_low and (_keep_ratio < 0.30 or _bel_share < 0.10):
+                raise Exception(_msg + f"（如确认无误，可设 MSF_ALLOW_LOW_COVER=1 放行）")
     order_df.sort_values(by=["purchase-date-local"],ascending=[True]).to_csv(os.path.join(tmp_dir,"order_df.csv"))
     return order_df
 
@@ -2288,6 +2318,14 @@ if __name__ == "__main__":
         print(line)
     for line in outline_warnings:
         print(f"⚠️ {line}")
+
+    # 2026-11-10：把亚马逊报告区间问题在末尾再汇总一遍，避免埋在前面几千行日志里被忽略
+    if AMZ_SANITY_WARNINGS:
+        print("\n" + "=" * 70)
+        print(f"🚨 亚马逊报告疑似导错月份区间，共 {len(AMZ_SANITY_WARNINGS)} 份，本期数字可能偏小：")
+        for _w in AMZ_SANITY_WARNINGS:
+            print("   " + _w)
+        print("=" * 70)
 
     print(f"✅ 结果文件（成品，注意不是data目录下的模板）: {os.path.abspath(result_path)}")
     # os.startfile(result_path)  # 202609 期：无人值守跑，先注释掉（跑完自动弹窗会占住成品，导致下轮保存失败）
